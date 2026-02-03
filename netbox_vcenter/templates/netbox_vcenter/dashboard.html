@@ -190,9 +190,6 @@
                         <td>
                             {% if vm.primary_ip %}
                             <code>{{ vm.primary_ip }}</code>
-                            {% if vm.ip_addresses|length > 1 %}
-                            <br><small class="text-muted">+{{ vm.ip_addresses|length|add:"-1" }} more</small>
-                            {% endif %}
                             {% else %}
                             <span class="text-muted">-</span>
                             {% endif %}
