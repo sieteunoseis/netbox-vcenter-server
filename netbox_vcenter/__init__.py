@@ -39,6 +39,13 @@ class VcenterConfig(PluginConfig):
         "mfa_enabled": True,  # Whether to show MFA warning
         "mfa_label": "2FA",  # Short label: "Duo", "2FA", "MFA", etc.
         "mfa_message": "After clicking \"Connect & Sync\", check your device for an authentication prompt.",
+        # Name matching for duplicate detection
+        # Options: "exact" (case-insensitive full name), "hostname" (strip domain), "regex" (custom pattern)
+        "name_match_mode": "exact",
+        # Regex pattern to extract the match portion from VM name (used when name_match_mode is "regex")
+        # Example: r"^([^.]+)" extracts hostname (same as "hostname" mode)
+        # Example: r"^(\w+\d+)" extracts letters followed by numbers
+        "name_match_pattern": r"^([^.]+)",
     }
 
 

@@ -2,6 +2,7 @@
 
 import json
 import logging
+import re
 
 from django.conf import settings
 from django.contrib import messages
@@ -15,6 +16,66 @@ from .client import connect_and_fetch
 from .forms import VCenterConnectForm, VMImportForm
 
 logger = logging.getLogger(__name__)
+
+
+def normalize_name(name: str, mode: str = "exact", pattern: str = None) -> str:
+    """
+    Normalize a VM name for matching based on the configured mode.
+
+    Args:
+        name: The VM name to normalize
+        mode: Match mode - "exact", "hostname", or "regex"
+        pattern: Regex pattern (used when mode is "regex")
+
+    Returns:
+        Normalized name for comparison (always lowercase)
+    """
+    if not name:
+        return ""
+
+    name = name.strip()
+
+    if mode == "hostname":
+        # Strip domain - everything after first dot
+        name = name.split(".")[0]
+    elif mode == "regex" and pattern:
+        try:
+            match = re.match(pattern, name, re.IGNORECASE)
+            if match and match.groups():
+                name = match.group(1)
+        except re.error:
+            logger.warning(f"Invalid regex pattern: {pattern}")
+
+    return name.lower()
+
+
+def get_name_match_config() -> tuple[str, str]:
+    """Get the name matching configuration."""
+    config = settings.PLUGINS_CONFIG.get("netbox_vcenter", {})
+    mode = config.get("name_match_mode", "exact")
+    pattern = config.get("name_match_pattern", r"^([^.]+)")
+    return mode, pattern
+
+
+def build_netbox_name_map(mode: str, pattern: str) -> dict[str, str]:
+    """
+    Build a mapping of normalized names to original NetBox VM names.
+
+    Returns:
+        Dict mapping normalized_name -> original_name
+    """
+    name_map = {}
+    for name in VirtualMachine.objects.values_list("name", flat=True):
+        normalized = normalize_name(name, mode, pattern)
+        if normalized not in name_map:
+            name_map[normalized] = name
+    return name_map
+
+
+def check_vm_exists(vm_name: str, mode: str, pattern: str, netbox_names: set) -> bool:
+    """Check if a VM exists in NetBox using the configured matching mode."""
+    normalized = normalize_name(vm_name, mode, pattern)
+    return normalized in netbox_names
 
 
 def get_cache_key(server: str) -> str:
@@ -71,10 +132,15 @@ class VCenterDashboardView(View):
         # Sort VMs by name
         vms = sorted(vms, key=lambda x: x.get("name", "").lower())
 
-        # Check which VMs already exist in NetBox (case-insensitive)
-        existing_names_lower = {name.lower() for name in VirtualMachine.objects.values_list("name", flat=True)}
+        # Get name matching config and check which VMs already exist in NetBox
+        match_mode, match_pattern = get_name_match_config()
+        existing_normalized = {
+            normalize_name(name, match_mode, match_pattern)
+            for name in VirtualMachine.objects.values_list("name", flat=True)
+        }
         for vm in vms:
-            vm["exists_in_netbox"] = vm.get("name", "").lower() in existing_names_lower
+            vm_normalized = normalize_name(vm.get("name", ""), match_mode, match_pattern)
+            vm["exists_in_netbox"] = vm_normalized in existing_normalized
 
         # Get MFA settings
         mfa_enabled = config.get("mfa_enabled", True)
@@ -191,10 +257,15 @@ class VMImportView(View):
         all_vms = cached_data.get("vms", [])
         vms_to_import = [vm for vm in all_vms if vm.get("name") in selected_vm_names]
 
-        # Check which VMs already exist in NetBox (case-insensitive)
-        existing_names_lower = {name.lower() for name in VirtualMachine.objects.values_list("name", flat=True)}
+        # Get name matching config and check which VMs already exist in NetBox
+        match_mode, match_pattern = get_name_match_config()
+        existing_normalized = {
+            normalize_name(name, match_mode, match_pattern)
+            for name in VirtualMachine.objects.values_list("name", flat=True)
+        }
         for vm in vms_to_import:
-            vm["exists_in_netbox"] = vm.get("name", "").lower() in existing_names_lower
+            vm_normalized = normalize_name(vm.get("name", ""), match_mode, match_pattern)
+            vm["exists_in_netbox"] = vm_normalized in existing_normalized
 
         form = VMImportForm(
             initial={
@@ -237,6 +308,13 @@ class VMImportView(View):
         all_vms = cached_data.get("vms", [])
         vms_to_import = [vm for vm in all_vms if vm.get("name") in selected_vm_names]
 
+        # Get name matching config for duplicate detection
+        match_mode, match_pattern = get_name_match_config()
+        existing_normalized = {
+            normalize_name(name, match_mode, match_pattern)
+            for name in VirtualMachine.objects.values_list("name", flat=True)
+        }
+
         # Import VMs
         created = 0
         skipped = 0
@@ -245,8 +323,9 @@ class VMImportView(View):
         for vm_data in vms_to_import:
             vm_name = vm_data.get("name")
 
-            # Check if VM already exists (case-insensitive)
-            if VirtualMachine.objects.filter(name__iexact=vm_name).exists():
+            # Check if VM already exists using configured matching
+            vm_normalized = normalize_name(vm_name, match_mode, match_pattern)
+            if vm_normalized in existing_normalized:
                 skipped += 1
                 continue
 
@@ -292,19 +371,34 @@ class VMComparisonView(View):
         """Show comparison between vCenter and NetBox VMs."""
         server = request.GET.get("server", "")
 
+        # Get name matching config
+        match_mode, match_pattern = get_name_match_config()
+
         # Get vCenter VMs from cache
         cached_data = get_cached_data(server) if server else None
         vcenter_vms = cached_data.get("vms", []) if cached_data else []
-        vcenter_names = {vm.get("name") for vm in vcenter_vms}
+
+        # Build maps: normalized_name -> original data
+        vcenter_normalized_map = {}  # normalized -> vm_data
+        for vm in vcenter_vms:
+            name = vm.get("name", "")
+            normalized = normalize_name(name, match_mode, match_pattern)
+            vcenter_normalized_map[normalized] = vm
 
         # Get NetBox VMs
         netbox_vms = VirtualMachine.objects.all()
-        netbox_names = set(netbox_vms.values_list("name", flat=True))
+        netbox_normalized_map = {}  # normalized -> vm_object
+        for vm in netbox_vms:
+            normalized = normalize_name(vm.name, match_mode, match_pattern)
+            netbox_normalized_map[normalized] = vm
 
-        # Categorize VMs
-        in_both = vcenter_names & netbox_names
-        only_in_vcenter = vcenter_names - netbox_names
-        only_in_netbox = netbox_names - vcenter_names
+        vcenter_normalized = set(vcenter_normalized_map.keys())
+        netbox_normalized = set(netbox_normalized_map.keys())
+
+        # Categorize VMs by normalized names
+        in_both = vcenter_normalized & netbox_normalized
+        only_in_vcenter = vcenter_normalized - netbox_normalized
+        only_in_netbox = netbox_normalized - vcenter_normalized
 
         # Build comparison lists
         comparison = {
@@ -314,13 +408,13 @@ class VMComparisonView(View):
         }
 
         # VMs in both - check for spec differences
-        vcenter_vm_map = {vm.get("name"): vm for vm in vcenter_vms}
-        for name in sorted(in_both):
-            vc_vm = vcenter_vm_map.get(name, {})
-            nb_vm = netbox_vms.filter(name=name).first()
+        for normalized in sorted(in_both):
+            vc_vm = vcenter_normalized_map.get(normalized, {})
+            nb_vm = netbox_normalized_map.get(normalized)
 
             diff = {
-                "name": name,
+                "name": vc_vm.get("name", normalized),  # Show original vCenter name
+                "netbox_name": nb_vm.name if nb_vm else None,  # Show NetBox name if different
                 "vcenter": vc_vm,
                 "netbox": {
                     "vcpus": nb_vm.vcpus if nb_vm else None,
@@ -342,15 +436,16 @@ class VMComparisonView(View):
             comparison["in_both"].append(diff)
 
         # VMs only in vCenter
-        for name in sorted(only_in_vcenter):
-            comparison["only_in_vcenter"].append(vcenter_vm_map.get(name, {"name": name}))
+        for normalized in sorted(only_in_vcenter):
+            vc_vm = vcenter_normalized_map.get(normalized, {})
+            comparison["only_in_vcenter"].append(vc_vm if vc_vm else {"name": normalized})
 
         # VMs only in NetBox
-        for name in sorted(only_in_netbox):
-            nb_vm = netbox_vms.filter(name=name).first()
+        for normalized in sorted(only_in_netbox):
+            nb_vm = netbox_normalized_map.get(normalized)
             comparison["only_in_netbox"].append(
                 {
-                    "name": name,
+                    "name": nb_vm.name if nb_vm else normalized,
                     "vcpus": nb_vm.vcpus if nb_vm else None,
                     "memory_mb": nb_vm.memory if nb_vm else None,
                     "cluster": nb_vm.cluster.name if nb_vm and nb_vm.cluster else None,
