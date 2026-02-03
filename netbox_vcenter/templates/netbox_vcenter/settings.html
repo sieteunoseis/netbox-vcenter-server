@@ -1,0 +1,35 @@
+{% extends 'generic/object.html' %}
+{% load helpers %}
+
+{% block title %}${PLUGIN_NAME^} Settings{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="card-title mb-0">
+                    <i class="mdi mdi-cog"></i> Configuration Status
+                </h5>
+            </div>
+            <div class="card-body">
+                {% if configured %}
+                <div class="alert alert-success">
+                    <i class="mdi mdi-check-circle"></i> Plugin is configured
+                </div>
+                {% else %}
+                <div class="alert alert-warning">
+                    <i class="mdi mdi-alert"></i> Plugin is not configured
+                </div>
+                <p>Add configuration to your <code>plugins.py</code>:</p>
+                <pre><code>PLUGINS_CONFIG = {
+    "${PACKAGE_NAME}": {
+        # Add your settings here
+    }
+}</code></pre>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

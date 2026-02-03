@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          pip install black flake8 isort
+
+      - name: Check formatting with black
+        run: black --check netbox_vcenter/
+
+      - name: Check imports with isort
+        run: isort --check-only netbox_vcenter/
+
+      - name: Lint with flake8
+        run: flake8 netbox_vcenter/ --max-line-length=120
