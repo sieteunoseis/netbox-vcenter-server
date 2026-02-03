@@ -1,7 +1,8 @@
 """
-NetBox Vcenter Plugin
+NetBox vCenter Plugin
 
-TODO: Add plugin description here.
+Provides a dashboard for viewing and importing VMs from VMware vCenter servers.
+Supports multiple vCenter servers with per-server caching and VM import to NetBox.
 """
 
 from netbox.plugins import PluginConfig
@@ -10,11 +11,11 @@ __version__ = "0.1.0"
 
 
 class VcenterConfig(PluginConfig):
-    """Plugin configuration for NetBox Vcenter integration."""
+    """Plugin configuration for NetBox vCenter integration."""
 
     name = "netbox_vcenter"
-    verbose_name = "Vcenter"
-    description = "TODO: Add description"
+    verbose_name = "vCenter"
+    description = "View and import VMs from VMware vCenter servers"
     version = __version__
     author = "sieteunoseis"
     author_email = "jeremy.worden@gmail.com"
@@ -26,13 +27,14 @@ class VcenterConfig(PluginConfig):
 
     # Default configuration values
     default_settings = {
-        # TODO: Add your plugin settings here
-        # Example:
-        # "api_url": "",
-        # "api_token": "",
-        "timeout": 30,
-        "cache_timeout": 300,
-        "verify_ssl": True,
+        # List of vCenter servers to choose from
+        "vcenter_servers": [
+            "vc-msb.ohsu.edu",
+            "vc-dcw.ohsu.edu",
+        ],
+        # Connection settings
+        "timeout": 60,  # Connection timeout in seconds (longer for Duo MFA)
+        "verify_ssl": False,  # SSL verification (False for self-signed certs)
     }
 
 

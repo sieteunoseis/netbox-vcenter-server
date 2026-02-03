@@ -1,0 +1,260 @@
+{% extends 'base/layout.html' %}
+{% load helpers %}
+{% load vcenter_tags %}
+
+{% block title %}vCenter Dashboard{% endblock %}
+
+{% block tabs %}
+<ul class="nav nav-tabs">
+    {% for server in servers %}
+    <li class="nav-item">
+        <a class="nav-link {% if server == selected_server %}active{% endif %}"
+           href="?server={{ server }}">
+            {{ server }}
+            {% if cached_data|get_key:server %}
+            <span class="badge bg-success text-white ms-1">{{ cached_data|get_key:server|get_key:'count' }}</span>
+            {% else %}
+            <span class="badge bg-secondary text-white ms-1">-</span>
+            {% endif %}
+        </a>
+    </li>
+    {% endfor %}
+    <li class="nav-item">
+        <a class="nav-link" href="{% url 'plugins:netbox_vcenter:compare' %}{% if selected_server %}?server={{ selected_server }}{% endif %}">
+            <i class="mdi mdi-compare"></i> Compare
+        </a>
+    </li>
+</ul>
+{% endblock %}
+
+{% block content %}
+<div class="row mb-4">
+    <!-- Connection Form -->
+    <div class="col-md-5">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="card-title mb-0">
+                    <i class="mdi mdi-connection"></i> Connect to vCenter
+                </h5>
+            </div>
+            <div class="card-body">
+                <div class="alert alert-warning mb-3">
+                    <i class="mdi mdi-shield-alert"></i>
+                    <strong>Duo MFA Required!</strong><br>
+                    After clicking "Connect & Sync", check your phone for a Duo push notification.
+                </div>
+
+                <form method="post">
+                    {% csrf_token %}
+
+                    <div class="mb-3">
+                        <label class="form-label">{{ form.server.label }}</label>
+                        {{ form.server }}
+                        <small class="text-muted">{{ form.server.help_text }}</small>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">{{ form.username.label }}</label>
+                        {{ form.username }}
+                        <small class="text-muted">{{ form.username.help_text }}</small>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">{{ form.password.label }}</label>
+                        {{ form.password }}
+                    </div>
+
+                    <div class="mb-3 form-check">
+                        {{ form.verify_ssl }}
+                        <label class="form-check-label">{{ form.verify_ssl.label }}</label>
+                        <br><small class="text-muted">{{ form.verify_ssl.help_text }}</small>
+                    </div>
+
+                    <button type="submit" class="btn btn-primary">
+                        <i class="mdi mdi-sync"></i> Connect & Sync
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Cache Status -->
+    <div class="col-md-7">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="card-title mb-0">
+                    <i class="mdi mdi-database"></i> Cache Status
+                </h5>
+            </div>
+            <div class="card-body">
+                <table class="table table-hover mb-0">
+                    <thead>
+                        <tr>
+                            <th>vCenter Server</th>
+                            <th>VMs</th>
+                            <th>Last Sync</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for server in servers %}
+                        {% with data=cached_data|get_key:server %}
+                        <tr{% if server == selected_server %} class="table-active"{% endif %}>
+                            <td>
+                                <a href="?server={{ server }}">{{ server }}</a>
+                            </td>
+                            <td>
+                                {% if data %}
+                                <span class="badge bg-primary text-white">{{ data.count }} VMs</span>
+                                {% else %}
+                                <span class="text-muted">Not synced</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if data.timestamp %}
+                                {{ data.timestamp|slice:":19" }}
+                                {% else %}
+                                <span class="text-muted">Never</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if data %}
+                                <a href="{% url 'plugins:netbox_vcenter:refresh' server %}"
+                                   class="btn btn-sm btn-outline-secondary"
+                                   onclick="return confirm('Clear cache for {{ server }}? You will need to re-enter credentials.');">
+                                    <i class="mdi mdi-refresh"></i> Clear Cache
+                                </a>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endwith %}
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- VM List -->
+{% if vms %}
+<div class="card">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <h5 class="card-title mb-0">
+            <i class="mdi mdi-server"></i> Virtual Machines from {{ selected_server }}
+            <span class="badge bg-info text-white ms-2">{{ vm_count }} VMs</span>
+        </h5>
+        <button type="button" class="btn btn-success" id="import-selected-btn" disabled>
+            <i class="mdi mdi-import"></i> Import Selected to NetBox
+        </button>
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-hover table-striped mb-0" id="vm-table">
+                <thead class="table-light">
+                    <tr>
+                        <th style="width: 40px;">
+                            <input type="checkbox" id="select-all" class="form-check-input">
+                        </th>
+                        <th>Name</th>
+                        <th>Power</th>
+                        <th>vCPUs</th>
+                        <th>Memory</th>
+                        <th>Disk</th>
+                        <th>Cluster</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for vm in vms %}
+                    <tr>
+                        <td>
+                            <input type="checkbox" class="form-check-input vm-checkbox"
+                                   value="{{ vm.name }}" data-vm-name="{{ vm.name }}">
+                        </td>
+                        <td>
+                            <strong>{{ vm.name }}</strong>
+                            {% if vm.guest_os %}
+                            <br><small class="text-muted">{{ vm.guest_os }}</small>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if vm.power_state == 'on' %}
+                            <span class="badge bg-success text-white">ON</span>
+                            {% else %}
+                            <span class="badge bg-secondary text-white">OFF</span>
+                            {% endif %}
+                        </td>
+                        <td>{{ vm.vcpus|default:'-' }}</td>
+                        <td>
+                            {% if vm.memory_mb %}
+                            {{ vm.memory_mb|floatformat:0 }} MB
+                            {% else %}
+                            -
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if vm.disk_gb %}
+                            {{ vm.disk_gb }} GB
+                            {% else %}
+                            -
+                            {% endif %}
+                        </td>
+                        <td>{{ vm.cluster|default:'-' }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% elif selected_server and not cached_data|get_key:selected_server %}
+<div class="alert alert-info">
+    <i class="mdi mdi-information"></i>
+    No cached data for <strong>{{ selected_server }}</strong>.
+    Enter your credentials and click "Connect & Sync" to fetch VMs.
+</div>
+{% endif %}
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const selectAll = document.getElementById('select-all');
+    const checkboxes = document.querySelectorAll('.vm-checkbox');
+    const importBtn = document.getElementById('import-selected-btn');
+
+    function updateImportButton() {
+        const selected = document.querySelectorAll('.vm-checkbox:checked');
+        importBtn.disabled = selected.length === 0;
+        importBtn.textContent = selected.length > 0
+            ? `Import ${selected.length} VM(s) to NetBox`
+            : 'Import Selected to NetBox';
+    }
+
+    if (selectAll) {
+        selectAll.addEventListener('change', function() {
+            checkboxes.forEach(cb => cb.checked = this.checked);
+            updateImportButton();
+        });
+    }
+
+    checkboxes.forEach(cb => {
+        cb.addEventListener('change', updateImportButton);
+    });
+
+    if (importBtn) {
+        importBtn.addEventListener('click', function() {
+            const selected = Array.from(document.querySelectorAll('.vm-checkbox:checked'))
+                .map(cb => cb.value);
+
+            if (selected.length === 0) {
+                alert('Please select at least one VM to import.');
+                return;
+            }
+
+            const server = '{{ selected_server }}';
+            const vmsJson = encodeURIComponent(JSON.stringify(selected));
+            window.location.href = `{% url 'plugins:netbox_vcenter:import' %}?vms=${vmsJson}&server=${server}`;
+        });
+    }
+});
+</script>
+{% endblock %}

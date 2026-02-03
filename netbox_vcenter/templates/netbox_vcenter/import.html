@@ -1,0 +1,136 @@
+{% extends 'base/layout.html' %}
+{% load helpers %}
+
+{% block title %}Import VMs from vCenter{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-8">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="card-title mb-0">
+                    <i class="mdi mdi-import"></i> Import VMs from {{ server }}
+                </h5>
+            </div>
+            <div class="card-body">
+                {% if existing_count > 0 %}
+                <div class="alert alert-warning">
+                    <i class="mdi mdi-alert"></i>
+                    <strong>{{ existing_count }} VM(s)</strong> already exist in NetBox and will be skipped.
+                </div>
+                {% endif %}
+
+                {% if new_count > 0 %}
+                <p class="mb-3">
+                    The following <strong>{{ new_count }} VM(s)</strong> will be imported to NetBox:
+                </p>
+
+                <div class="table-responsive mb-4">
+                    <table class="table table-sm table-hover">
+                        <thead class="table-light">
+                            <tr>
+                                <th>VM Name</th>
+                                <th>Power</th>
+                                <th>vCPUs</th>
+                                <th>Memory</th>
+                                <th>Disk</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for vm in vms %}
+                            <tr{% if vm.exists_in_netbox %} class="table-secondary"{% endif %}>
+                                <td>
+                                    {{ vm.name }}
+                                    {% if vm.exists_in_netbox %}
+                                    <span class="badge bg-warning text-dark">Exists</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% if vm.power_state == 'on' %}
+                                    <span class="badge bg-success text-white">ON</span>
+                                    {% else %}
+                                    <span class="badge bg-secondary text-white">OFF</span>
+                                    {% endif %}
+                                </td>
+                                <td>{{ vm.vcpus|default:'-' }}</td>
+                                <td>{{ vm.memory_mb|default:'-' }} MB</td>
+                                <td>{{ vm.disk_gb|default:'-' }} GB</td>
+                                <td>
+                                    {% if vm.exists_in_netbox %}
+                                    <span class="text-muted">Skip</span>
+                                    {% else %}
+                                    <span class="text-success">Import</span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+
+                <form method="post">
+                    {% csrf_token %}
+                    {{ form.selected_vms }}
+                    {{ form.vcenter_server }}
+
+                    <div class="mb-3">
+                        <label class="form-label">
+                            <strong>Target Cluster</strong> <span class="text-danger">*</span>
+                        </label>
+                        {{ form.cluster }}
+                        <small class="text-muted">
+                            Select the NetBox cluster to assign these VMs to.
+                        </small>
+                    </div>
+
+                    <hr>
+
+                    <div class="d-flex justify-content-between">
+                        <a href="{% url 'plugins:netbox_vcenter:dashboard' %}?server={{ server }}"
+                           class="btn btn-outline-secondary">
+                            <i class="mdi mdi-arrow-left"></i> Cancel
+                        </a>
+                        <button type="submit" class="btn btn-success">
+                            <i class="mdi mdi-import"></i> Import {{ new_count }} VM(s)
+                        </button>
+                    </div>
+                </form>
+                {% else %}
+                <div class="alert alert-info">
+                    <i class="mdi mdi-information"></i>
+                    All selected VMs already exist in NetBox. Nothing to import.
+                </div>
+                <a href="{% url 'plugins:netbox_vcenter:dashboard' %}?server={{ server }}"
+                   class="btn btn-outline-secondary">
+                    <i class="mdi mdi-arrow-left"></i> Back to Dashboard
+                </a>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="card-title mb-0">
+                    <i class="mdi mdi-information"></i> Import Notes
+                </h5>
+            </div>
+            <div class="card-body">
+                <ul class="mb-0">
+                    <li>VMs that already exist in NetBox (by name) will be skipped.</li>
+                    <li>Power state determines VM status:
+                        <ul>
+                            <li>Powered On → <span class="badge bg-success text-white">Active</span></li>
+                            <li>Powered Off → <span class="badge bg-secondary text-white">Offline</span></li>
+                        </ul>
+                    </li>
+                    <li>vCPUs, Memory, and Disk will be copied from vCenter.</li>
+                    <li>Import source is recorded in comments.</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,209 @@
+{% extends 'base/layout.html' %}
+{% load helpers %}
+
+{% block title %}vCenter vs NetBox Comparison{% endblock %}
+
+{% block content %}
+<div class="row mb-4">
+    <div class="col-md-12">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="card-title mb-0">
+                    <i class="mdi mdi-compare"></i> Compare vCenter with NetBox
+                </h5>
+                <div>
+                    <select class="form-select form-select-sm d-inline-block w-auto" id="server-select">
+                        <option value="">Select vCenter...</option>
+                        {% for s in servers %}
+                        <option value="{{ s }}" {% if s == server %}selected{% endif %}>{{ s }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+            </div>
+            <div class="card-body">
+                {% if not server %}
+                <div class="alert alert-info">
+                    <i class="mdi mdi-information"></i>
+                    Select a vCenter server to compare with NetBox VMs.
+                </div>
+                {% elif not cached_data %}
+                <div class="alert alert-warning">
+                    <i class="mdi mdi-alert"></i>
+                    No cached data for <strong>{{ server }}</strong>.
+                    <a href="{% url 'plugins:netbox_vcenter:dashboard' %}?server={{ server }}">Sync first</a>.
+                </div>
+                {% else %}
+                <!-- Summary Stats -->
+                <div class="row mb-4">
+                    <div class="col-md-3">
+                        <div class="card bg-primary text-white">
+                            <div class="card-body text-center">
+                                <h3 class="mb-0">{{ in_both_count }}</h3>
+                                <small>In Both</small>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="card bg-success text-white">
+                            <div class="card-body text-center">
+                                <h3 class="mb-0">{{ only_vcenter_count }}</h3>
+                                <small>Only in vCenter</small>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="card bg-warning text-dark">
+                            <div class="card-body text-center">
+                                <h3 class="mb-0">{{ only_netbox_count }}</h3>
+                                <small>Only in NetBox</small>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="card bg-danger text-white">
+                            <div class="card-body text-center">
+                                <h3 class="mb-0">{{ diff_count }}</h3>
+                                <small>Spec Differences</small>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Only in vCenter (Can Import) -->
+                {% if comparison.only_in_vcenter %}
+                <h5 class="mt-4 mb-3">
+                    <span class="badge bg-success text-white">{{ only_vcenter_count }}</span>
+                    Only in vCenter (Can Import)
+                </h5>
+                <div class="table-responsive mb-4">
+                    <table class="table table-sm table-hover table-striped">
+                        <thead class="table-success">
+                            <tr>
+                                <th>VM Name</th>
+                                <th>Power</th>
+                                <th>vCPUs</th>
+                                <th>Memory</th>
+                                <th>Disk</th>
+                                <th>Cluster</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for vm in comparison.only_in_vcenter %}
+                            <tr>
+                                <td><strong>{{ vm.name }}</strong></td>
+                                <td>
+                                    {% if vm.power_state == 'on' %}
+                                    <span class="badge bg-success text-white">ON</span>
+                                    {% else %}
+                                    <span class="badge bg-secondary text-white">OFF</span>
+                                    {% endif %}
+                                </td>
+                                <td>{{ vm.vcpus|default:'-' }}</td>
+                                <td>{{ vm.memory_mb|default:'-' }}</td>
+                                <td>{{ vm.disk_gb|default:'-' }}</td>
+                                <td>{{ vm.cluster|default:'-' }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% endif %}
+
+                <!-- VMs with Differences -->
+                {% if diff_count > 0 %}
+                <h5 class="mt-4 mb-3">
+                    <span class="badge bg-danger text-white">{{ diff_count }}</span>
+                    VMs with Spec Differences
+                </h5>
+                <div class="table-responsive mb-4">
+                    <table class="table table-sm table-hover">
+                        <thead class="table-danger">
+                            <tr>
+                                <th>VM Name</th>
+                                <th>Field</th>
+                                <th>vCenter</th>
+                                <th>NetBox</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for vm in comparison.in_both %}
+                            {% if vm.has_differences %}
+                            {% if vm.vcenter.vcpus != vm.netbox.vcpus %}
+                            <tr>
+                                <td><strong>{{ vm.name }}</strong></td>
+                                <td>vCPUs</td>
+                                <td>{{ vm.vcenter.vcpus|default:'-' }}</td>
+                                <td>{{ vm.netbox.vcpus|default:'-' }}</td>
+                            </tr>
+                            {% endif %}
+                            {% if vm.vcenter.memory_mb != vm.netbox.memory_mb %}
+                            <tr>
+                                <td><strong>{{ vm.name }}</strong></td>
+                                <td>Memory (MB)</td>
+                                <td>{{ vm.vcenter.memory_mb|default:'-' }}</td>
+                                <td>{{ vm.netbox.memory_mb|default:'-' }}</td>
+                            </tr>
+                            {% endif %}
+                            {% if vm.vcenter.disk_gb != vm.netbox.disk_gb %}
+                            <tr>
+                                <td><strong>{{ vm.name }}</strong></td>
+                                <td>Disk (GB)</td>
+                                <td>{{ vm.vcenter.disk_gb|default:'-' }}</td>
+                                <td>{{ vm.netbox.disk_gb|default:'-' }}</td>
+                            </tr>
+                            {% endif %}
+                            {% endif %}
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% endif %}
+
+                <!-- Only in NetBox (Orphaned?) -->
+                {% if comparison.only_in_netbox %}
+                <h5 class="mt-4 mb-3">
+                    <span class="badge bg-warning text-dark">{{ only_netbox_count }}</span>
+                    Only in NetBox (Not in {{ server }})
+                </h5>
+                <div class="table-responsive mb-4">
+                    <table class="table table-sm table-hover table-striped">
+                        <thead class="table-warning">
+                            <tr>
+                                <th>VM Name</th>
+                                <th>vCPUs</th>
+                                <th>Memory</th>
+                                <th>NetBox Cluster</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for vm in comparison.only_in_netbox %}
+                            <tr>
+                                <td><strong>{{ vm.name }}</strong></td>
+                                <td>{{ vm.vcpus|default:'-' }}</td>
+                                <td>{{ vm.memory_mb|default:'-' }}</td>
+                                <td>{{ vm.cluster|default:'-' }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                <p class="text-muted">
+                    <i class="mdi mdi-information"></i>
+                    These VMs exist in NetBox but were not found in <strong>{{ server }}</strong>.
+                    They may be on a different vCenter or have been deleted.
+                </p>
+                {% endif %}
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+document.getElementById('server-select').addEventListener('change', function() {
+    if (this.value) {
+        window.location.href = '?server=' + this.value;
+    }
+});
+</script>
+{% endblock %}

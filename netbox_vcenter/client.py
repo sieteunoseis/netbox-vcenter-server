@@ -1,83 +1,220 @@
-"""API client for external service integration."""
+"""vCenter API client using pyvmomi."""
 
 import logging
+import ssl
 from typing import Optional
 
-import requests
-from django.conf import settings
-from django.core.cache import cache
+from pyVim.connect import Disconnect, SmartConnect
+from pyVmomi import vim
 
 logger = logging.getLogger(__name__)
 
 
-class VcenterClient:
-    """Client for Vcenter API with caching and error handling."""
+class VCenterClient:
+    """Client for connecting to VMware vCenter and fetching VM data."""
 
-    def __init__(self):
-        """Initialize the client from plugin settings."""
-        self.config = settings.PLUGINS_CONFIG.get("netbox_vcenter", {})
+    def __init__(self, server: str, username: str, password: str, verify_ssl: bool = False):
+        """
+        Initialize vCenter client.
 
-        # TODO: Add your settings here
-        # self.api_url = self.config.get("api_url", "").rstrip("/")
-        # self.api_token = self.config.get("api_token", "")
-        self.timeout = self.config.get("timeout", 30)
-        self.cache_timeout = self.config.get("cache_timeout", 300)
-        self.verify_ssl = self.config.get("verify_ssl", True)
+        Args:
+            server: vCenter server hostname
+            username: vCenter username (e.g., domain\\user)
+            password: vCenter password
+            verify_ssl: Whether to verify SSL certificates
+        """
+        self.server = server
+        self.username = username
+        self.password = password
+        self.verify_ssl = verify_ssl
+        self.service_instance = None
+        self.content = None
 
-    def _make_request(self, endpoint: str, params: Optional[dict] = None) -> Optional[dict]:
-        """Make authenticated request with error handling."""
-        # TODO: Implement API request
-        # url = f"{self.api_url}/{endpoint}"
-        # headers = {"Authorization": f"Bearer {self.api_token}"}
-        #
-        # try:
-        #     response = requests.get(
-        #         url,
-        #         headers=headers,
-        #         params=params,
-        #         timeout=self.timeout,
-        #         verify=self.verify_ssl,
-        #     )
-        #     response.raise_for_status()
-        #     return response.json()
-        # except requests.Timeout:
-        #     logger.error(f"API request timed out: {endpoint}")
-        #     return None
-        # except requests.RequestException as e:
-        #     logger.error(f"API request failed: {e}")
-        #     return None
-        return None
+    def connect(self):
+        """
+        Connect to vCenter server.
 
-    def get_data(self, identifier: str) -> dict:
-        """Get data with caching."""
-        cache_key = f"netbox_vcenter_{identifier}"
-        cached = cache.get(cache_key)
-        if cached:
-            cached["cached"] = True
-            return cached
+        Returns:
+            ServiceInstance object
 
-        result = self._make_request(f"data/{identifier}")
-        if result:
-            result["cached"] = False
-            cache.set(cache_key, result, self.cache_timeout)
-            return result
+        Raises:
+            Exception: If connection fails
+        """
+        logger.info(f"Connecting to vCenter: {self.server}")
 
-        return {"error": "No data found", "cached": False}
+        ssl_context = None
+        if not self.verify_ssl:
+            ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+            ssl_context.check_hostname = False
+            ssl_context.verify_mode = ssl.CERT_NONE
 
-    def test_connection(self) -> tuple[bool, str]:
-        """Test connection to API."""
-        # TODO: Implement connection test
-        # result = self._make_request("status")
-        # if result:
-        #     return True, "Connected successfully"
-        return False, "Not implemented"
+        self.service_instance = SmartConnect(
+            host=self.server,
+            user=self.username,
+            pwd=self.password,
+            sslContext=ssl_context,
+        )
+
+        self.content = self.service_instance.RetrieveContent()
+        logger.info(f"Connected to vCenter: {self.content.about.fullName}")
+
+        return self.service_instance
+
+    def disconnect(self):
+        """Disconnect from vCenter server."""
+        if self.service_instance:
+            logger.info(f"Disconnecting from vCenter: {self.server}")
+            Disconnect(self.service_instance)
+            self.service_instance = None
+            self.content = None
+
+    def _get_objects_of_type(self, obj_type):
+        """Get all objects of a specific type from vCenter."""
+        view_mgr = self.content.viewManager.CreateContainerView(
+            self.content.rootFolder, [obj_type], True
+        )
+        try:
+            return list(view_mgr.view)
+        finally:
+            view_mgr.Destroy()
+
+    def get_vcenter_info(self) -> dict:
+        """Get vCenter server information."""
+        about = self.content.about
+        return {
+            "name": about.name,
+            "full_name": about.fullName,
+            "version": about.version,
+            "build": about.build,
+            "os_type": about.osType,
+        }
+
+    def fetch_all_vms(self) -> list:
+        """
+        Fetch all virtual machines from vCenter.
+
+        Returns:
+            List of VM dictionaries with details
+        """
+        logger.info(f"Fetching VMs from {self.server}")
+
+        vms = self._get_objects_of_type(vim.VirtualMachine)
+        vm_list = []
+
+        for vm in vms:
+            try:
+                vm_data = {
+                    "name": vm.name,
+                    "power_state": "on" if vm.runtime.powerState == "poweredOn" else "off",
+                    "vcpus": None,
+                    "memory_mb": None,
+                    "disk_gb": None,
+                    "cluster": None,
+                    "datacenter": None,
+                    "guest_os": None,
+                    "uuid": None,
+                }
+
+                # Get hardware config
+                if vm.config:
+                    vm_data["vcpus"] = vm.config.hardware.numCPU
+                    vm_data["memory_mb"] = vm.config.hardware.memoryMB
+                    vm_data["guest_os"] = vm.config.guestFullName
+                    vm_data["uuid"] = vm.config.uuid
+
+                    # Calculate total disk capacity
+                    disk_devices = [
+                        device
+                        for device in vm.config.hardware.device
+                        if isinstance(device, vim.vm.device.VirtualDisk)
+                    ]
+                    if disk_devices:
+                        total_kb = sum(d.capacityInKB for d in disk_devices)
+                        vm_data["disk_gb"] = round(total_kb / 1048576)  # KB to GB
+
+                # Get cluster and datacenter
+                if vm.runtime.host:
+                    host = vm.runtime.host
+                    if host.parent and isinstance(host.parent, vim.ClusterComputeResource):
+                        vm_data["cluster"] = host.parent.name
+                    # Walk up to find datacenter
+                    parent = host.parent
+                    while parent:
+                        if isinstance(parent, vim.Datacenter):
+                            vm_data["datacenter"] = parent.name
+                            break
+                        parent = getattr(parent, "parent", None)
+
+                vm_list.append(vm_data)
+
+            except Exception as e:
+                logger.warning(f"Error processing VM {vm.name}: {e}")
+                continue
+
+        logger.info(f"Fetched {len(vm_list)} VMs from {self.server}")
+        return vm_list
+
+    def fetch_clusters(self) -> list:
+        """
+        Fetch all clusters from vCenter.
+
+        Returns:
+            List of cluster dictionaries
+        """
+        clusters = self._get_objects_of_type(vim.ClusterComputeResource)
+        cluster_list = []
+
+        for cluster in clusters:
+            cluster_list.append(
+                {
+                    "name": cluster.name,
+                    "host_count": len(cluster.host) if cluster.host else 0,
+                }
+            )
+
+        return cluster_list
+
+    def fetch_datacenters(self) -> list:
+        """
+        Fetch all datacenters from vCenter.
+
+        Returns:
+            List of datacenter dictionaries
+        """
+        datacenters = self._get_objects_of_type(vim.Datacenter)
+        return [{"name": dc.name} for dc in datacenters]
 
 
-def get_client() -> Optional[VcenterClient]:
-    """Get a configured client instance."""
-    # TODO: Check if required settings are configured
-    # config = settings.PLUGINS_CONFIG.get("netbox_vcenter", {})
-    # if not config.get("api_url"):
-    #     logger.warning("Vcenter API URL not configured")
-    #     return None
-    return VcenterClient()
+def connect_and_fetch(
+    server: str, username: str, password: str, verify_ssl: bool = False
+) -> tuple[Optional[list], Optional[str]]:
+    """
+    Connect to vCenter and fetch all VMs.
+
+    This is a convenience function that handles connection/disconnection.
+
+    Args:
+        server: vCenter server hostname
+        username: vCenter username
+        password: vCenter password
+        verify_ssl: Whether to verify SSL certificates
+
+    Returns:
+        Tuple of (vm_list, error_message)
+        - On success: (list of VMs, None)
+        - On failure: (None, error message)
+    """
+    client = VCenterClient(server, username, password, verify_ssl)
+
+    try:
+        client.connect()
+        vms = client.fetch_all_vms()
+        return vms, None
+    except vim.fault.InvalidLogin as e:
+        logger.error(f"vCenter authentication failed: {e.msg}")
+        return None, f"Authentication failed: Invalid username or password"
+    except Exception as e:
+        logger.error(f"vCenter connection failed: {e}")
+        return None, f"Connection failed: {str(e)}"
+    finally:
+        client.disconnect()

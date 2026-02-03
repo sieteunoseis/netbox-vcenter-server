@@ -3,9 +3,9 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "netbox-vcenter"
+name = "netbox-vcenter-server"
 version = "0.1.0"
-description = "NetBox plugin for vcenter integration"
+description = "NetBox plugin for viewing and importing VMs from VMware vCenter servers"
 readme = "README.md"
 license = {text = "Apache-2.0"}
 requires-python = ">=3.10"
@@ -22,10 +22,10 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
 ]
-keywords = ["netbox", "netbox-plugin", "vcenter"]
+keywords = ["netbox", "netbox-plugin", "vcenter", "vmware", "vsphere"]
 
 dependencies = [
-    "requests>=2.25.0",
+    "pyvmomi>=8.0.0",
 ]
 
 [project.optional-dependencies]
@@ -36,10 +36,10 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/sieteunoseis/netbox-vcenter"
-Repository = "https://github.com/sieteunoseis/netbox-vcenter"
-Documentation = "https://github.com/sieteunoseis/netbox-vcenter/wiki"
-Changelog = "https://github.com/sieteunoseis/netbox-vcenter/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/sieteunoseis/netbox-vcenter-server"
+Repository = "https://github.com/sieteunoseis/netbox-vcenter-server"
+Documentation = "https://github.com/sieteunoseis/netbox-vcenter-server/wiki"
+Changelog = "https://github.com/sieteunoseis/netbox-vcenter-server/blob/main/CHANGELOG.md"
 
 [tool.setuptools.packages.find]
 include = ["netbox_vcenter*"]

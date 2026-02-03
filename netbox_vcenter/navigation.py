@@ -1,11 +1,25 @@
-"""Navigation menu items for NetBox Vcenter plugin."""
+"""Navigation menu items for NetBox vCenter plugin."""
 
-from netbox.plugins import PluginMenuItem
+from netbox.plugins import PluginMenu, PluginMenuItem
 
-menu_items = (
-    PluginMenuItem(
-        link="plugins:netbox_vcenter:settings",
-        link_text="Vcenter Settings",
-        permissions=["dcim.view_device"],
+menu = PluginMenu(
+    label="vCenter",
+    groups=(
+        (
+            "Virtual Machines",
+            (
+                PluginMenuItem(
+                    link="plugins:netbox_vcenter:dashboard",
+                    link_text="Dashboard",
+                    permissions=["virtualization.view_virtualmachine"],
+                ),
+                PluginMenuItem(
+                    link="plugins:netbox_vcenter:compare",
+                    link_text="Compare with NetBox",
+                    permissions=["virtualization.view_virtualmachine"],
+                ),
+            ),
+        ),
     ),
+    icon_class="mdi mdi-server",
 )
