@@ -37,8 +37,8 @@ class VcenterConfig(PluginConfig):
         "verify_ssl": False,  # SSL verification (False for self-signed certs)
         # MFA/2FA settings
         "mfa_enabled": True,  # Whether to show MFA warning
-        "mfa_label": "2FA",  # Short label: "Duo", "2FA", "MFA", etc.
-        "mfa_message": "After clicking \"Connect & Sync\", check your device for an authentication prompt.",
+        "mfa_label": "MFA",  # Short label: "Duo", "2FA", "MFA", etc.
+        "mfa_message": "Check your authenticator after clicking Connect & Sync.",
         # Name matching for duplicate detection
         # Options: "exact" (case-insensitive full name), "hostname" (strip domain), "regex" (custom pattern)
         "name_match_mode": "exact",

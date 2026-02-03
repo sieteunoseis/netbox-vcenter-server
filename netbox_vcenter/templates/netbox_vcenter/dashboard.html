@@ -39,10 +39,9 @@
             </div>
             <div class="card-body">
                 {% if mfa_enabled %}
-                <div class="alert alert-warning mb-3">
-                    <i class="mdi mdi-shield-alert"></i>
-                    <strong>{{ mfa_label }} Required!</strong><br>
-                    {{ mfa_message }}
+                <div class="alert alert-warning mb-3 py-2">
+                    <div><i class="mdi mdi-shield-alert"></i> <strong>{{ mfa_label }} Required</strong></div>
+                    <div class="small">{{ mfa_message }}</div>
                 </div>
                 {% endif %}
 
