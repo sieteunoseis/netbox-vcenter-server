@@ -18,7 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Name Matching Modes** - Configurable duplicate detection: exact, hostname, or regex
 - **Import Settings** - Configure default tag, role, and platform for imported VMs
 - **Name Normalization** - Optionally normalize VM names on import (strip domain, lowercase)
-- **Duo MFA Support** - Works with environments requiring Duo authentication
+- **MFA/2FA Support** - Works with environments requiring multi-factor authentication
 
 ### Changed
 - Renamed "Dashboard" to "Import Dashboard" for clarity

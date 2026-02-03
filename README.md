@@ -17,7 +17,7 @@ A NetBox plugin for viewing and importing VMs from VMware vCenter servers.
 - **VM Import** - Import VMs from vCenter into NetBox with one click
 - **Comparison View** - Compare vCenter VMs with NetBox to find differences
 - **Manual Cache Control** - Data persists until you click Refresh
-- **Duo MFA Support** - Works with environments requiring Duo authentication
+- **MFA/2FA Support** - Works with environments requiring multi-factor authentication
 
 ## Requirements
 
@@ -73,7 +73,7 @@ PLUGINS_CONFIG = {
         'verify_ssl': False, # SSL verification (False for self-signed certs)
         # MFA/2FA settings (optional)
         'mfa_enabled': True,  # Show MFA warning in UI
-        'mfa_label': 'Duo',   # Label shown: "Duo", "2FA", "MFA"
+        'mfa_label': 'MFA',   # Label shown in UI (e.g., "Duo", "2FA", "MFA")
         'mfa_message': 'Check your authenticator after clicking Connect & Sync.',
         # Name matching for duplicate detection
         # Options: "exact" (full name), "hostname" (strip domain), "regex"
@@ -96,7 +96,7 @@ PLUGINS_CONFIG = {
 2. Select a vCenter server from the dropdown
 3. Enter your username and password
 4. Click **Connect & Sync**
-5. If Duo MFA is enabled, approve the push notification on your phone
+5. If MFA is enabled, approve the authentication prompt
 6. VMs will be fetched and cached (data persists until you click Refresh)
 
 ### Importing VMs to NetBox
@@ -127,7 +127,7 @@ PLUGINS_CONFIG = {
 - Verify vCenter hostname is reachable from the NetBox server
 - Check that credentials are correct (use `domain\username` format)
 - For self-signed certificates, set `verify_ssl: False`
-- If using Duo MFA, ensure you approve the push notification promptly
+- If using MFA/2FA, ensure you approve the authentication prompt promptly
 
 ### Authentication issues
 
