@@ -70,9 +70,7 @@ class VCenterClient:
 
     def _get_objects_of_type(self, obj_type):
         """Get all objects of a specific type from vCenter."""
-        view_mgr = self.content.viewManager.CreateContainerView(
-            self.content.rootFolder, [obj_type], True
-        )
+        view_mgr = self.content.viewManager.CreateContainerView(self.content.rootFolder, [obj_type], True)
         try:
             return list(view_mgr.view)
         finally:
@@ -127,9 +125,7 @@ class VCenterClient:
 
                     # Calculate total disk capacity
                     disk_devices = [
-                        device
-                        for device in vm.config.hardware.device
-                        if isinstance(device, vim.vm.device.VirtualDisk)
+                        device for device in vm.config.hardware.device if isinstance(device, vim.vm.device.VirtualDisk)
                     ]
                     if disk_devices:
                         total_kb = sum(d.capacityInKB for d in disk_devices)

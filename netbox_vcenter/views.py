@@ -4,16 +4,16 @@ import json
 import logging
 import re
 
+from dcim.models import Platform
 from django.conf import settings
 from django.contrib import messages
 from django.core.cache import cache
 from django.shortcuts import redirect, render
 from django.utils import timezone
 from django.views.generic import View
-from dcim.models import Platform
 from extras.models import Tag
 from ipam.models import IPAddress
-from virtualization.models import Cluster, VMInterface, VirtualMachine
+from virtualization.models import Cluster, VirtualMachine, VMInterface
 
 from .client import connect_and_fetch
 from .forms import VCenterConnectForm, VMImportForm
@@ -68,7 +68,43 @@ def get_import_config() -> dict:
         "default_tag": config.get("default_tag", ""),
         "default_role": config.get("default_role", ""),
         "default_platform": config.get("default_platform", ""),
+        "platform_mappings": config.get("platform_mappings", []),
     }
+
+
+def get_platform_for_guest_os(guest_os: str, mappings: list) -> Platform | None:
+    """
+    Match vCenter guest OS to a NetBox platform using configured mappings.
+
+    Args:
+        guest_os: The guest OS string from vCenter (e.g., "Microsoft Windows Server 2019 (64-bit)")
+        mappings: List of dicts with "pattern" (regex) and "platform" (slug) keys
+
+    Returns:
+        Platform object if a match is found and platform exists, None otherwise
+    """
+    if not guest_os or not mappings:
+        return None
+
+    for mapping in mappings:
+        pattern = mapping.get("pattern", "")
+        platform_slug = mapping.get("platform", "")
+
+        if not pattern or not platform_slug:
+            continue
+
+        try:
+            if re.search(pattern, guest_os, re.IGNORECASE):
+                try:
+                    return Platform.objects.get(slug=platform_slug)
+                except Platform.DoesNotExist:
+                    logger.warning(f"Platform '{platform_slug}' not found for guest OS '{guest_os}'")
+                    return None
+        except re.error:
+            logger.warning(f"Invalid regex pattern in platform_mappings: {pattern}")
+            continue
+
+    return None
 
 
 def get_name_for_import(vm_name: str, normalize: bool, mode: str, pattern: str) -> str:
@@ -364,6 +400,7 @@ class VMImportView(View):
         default_tag_slug = import_config["default_tag"]
         default_role_slug = import_config["default_role"]
         default_platform_slug = import_config["default_platform"]
+        platform_mappings = import_config["platform_mappings"]
 
         # Look up default tag, role, platform if configured
         default_tag = None
@@ -379,6 +416,7 @@ class VMImportView(View):
         if default_role_slug:
             try:
                 from dcim.models import DeviceRole
+
                 default_role = DeviceRole.objects.get(slug=default_role_slug)
             except Exception:
                 logger.warning(f"Default role '{default_role_slug}' not found in NetBox")
@@ -423,8 +461,15 @@ class VMImportView(View):
                         # Update role and platform if configured and not already set
                         if default_role and not existing_vm.role:
                             existing_vm.role = default_role
-                        if default_platform and not existing_vm.platform:
-                            existing_vm.platform = default_platform
+                        if not existing_vm.platform:
+                            if default_platform:
+                                existing_vm.platform = default_platform
+                            elif platform_mappings:
+                                # Try to map guest OS to platform
+                                guest_os = vm_data.get("guest_os")
+                                mapped_platform = get_platform_for_guest_os(guest_os, platform_mappings)
+                                if mapped_platform:
+                                    existing_vm.platform = mapped_platform
 
                         # Update primary IP if available
                         primary_ip = vm_data.get("primary_ip")
@@ -450,6 +495,12 @@ class VMImportView(View):
                 # Determine status based on power state
                 status = "active" if vm_data.get("power_state") == "on" else "offline"
 
+                # Determine platform - use default if set, otherwise try guest OS mapping
+                vm_platform = default_platform
+                if not vm_platform and platform_mappings:
+                    guest_os = vm_data.get("guest_os")
+                    vm_platform = get_platform_for_guest_os(guest_os, platform_mappings)
+
                 # Create the VM with normalized or original name
                 vm = VirtualMachine(
                     name=import_name,
@@ -459,7 +510,7 @@ class VMImportView(View):
                     disk=vm_data.get("disk_gb"),
                     status=status,
                     role=default_role,
-                    platform=default_platform,
+                    platform=vm_platform,
                     comments=f"Imported from vCenter {server} on {timezone.now().strftime('%Y-%m-%d %H:%M')}",
                 )
                 vm.full_clean()

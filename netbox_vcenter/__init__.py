@@ -7,7 +7,7 @@ Supports multiple vCenter servers with per-server caching and VM import to NetBo
 
 from netbox.plugins import PluginConfig
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 
 class VcenterConfig(PluginConfig):
@@ -53,6 +53,22 @@ class VcenterConfig(PluginConfig):
         "default_role": "",
         # Optional default platform slug for imported VMs (must exist in NetBox, or leave empty)
         "default_platform": "",
+        # Platform mappings - auto-map vCenter guest OS to NetBox platform
+        # Each mapping has a "pattern" (regex to match against guest OS) and "platform" (NetBox platform slug)
+        # Mappings are evaluated in order; first match wins
+        # Example:
+        # "platform_mappings": [
+        #     {"pattern": r"Microsoft Windows Server 2022", "platform": "windows-server-2022"},
+        #     {"pattern": r"Microsoft Windows Server 2019", "platform": "windows-server-2019"},
+        #     {"pattern": r"Microsoft Windows Server", "platform": "windows-server"},
+        #     {"pattern": r"Microsoft Windows 1[01]", "platform": "windows-desktop"},
+        #     {"pattern": r"Ubuntu", "platform": "ubuntu"},
+        #     {"pattern": r"CentOS", "platform": "centos"},
+        #     {"pattern": r"Red Hat", "platform": "rhel"},
+        #     {"pattern": r"Debian", "platform": "debian"},
+        #     {"pattern": r"VMware Photon", "platform": "photon"},
+        # ]
+        "platform_mappings": [],
     }
 
 
