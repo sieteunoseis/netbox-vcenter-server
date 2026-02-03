@@ -57,8 +57,8 @@
 
                 <form hx-post="{% url 'plugins:netbox_vcenter:sync' %}"
                       hx-target="#sync-status"
-                      hx-indicator="#sync-loading"
-                      hx-disabled-elt="#sync-btn">
+                      hx-indicator="#sync-btn"
+                      class="vcenter-sync-form">
                     {% csrf_token %}
 
                     <div class="mb-3">
@@ -151,6 +151,21 @@
                         {% endfor %}
                     </tbody>
                 </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Sync Loading Indicator (shown during htmx request) -->
+<div id="sync-loading-panel" class="card mb-4">
+    <div class="card-body">
+        <div class="d-flex justify-content-center align-items-center py-5">
+            <div class="text-center">
+                <div class="spinner-border text-primary mb-3" role="status" style="width: 3rem; height: 3rem;">
+                    <span class="visually-hidden">Loading...</span>
+                </div>
+                <p class="text-muted mb-0">Connecting to vCenter and fetching VMs...</p>
+                <p class="text-muted small">This may take a moment if MFA is required.</p>
             </div>
         </div>
     </div>
@@ -259,19 +274,24 @@
 </div>
 {% elif selected_server and selected_server != 'all' and not cached_data|get_key:selected_server %}
 <div class="alert alert-info">
-    <i class="mdi mdi-information"></i>
-    No cached data for <strong>{{ selected_server }}</strong>.
-    Enter your credentials and click "Connect & Sync" to fetch VMs.
+    <i class="mdi mdi-information"></i> No cached data for <strong>{{ selected_server }}</strong>. Enter your credentials and click "Connect & Sync" to fetch VMs.
 </div>
 {% endif %}
 
 <style>
-/* Hide loading indicator by default, show when htmx is processing */
-.htmx-indicator { display: none; }
-.htmx-request .htmx-indicator { display: inline; }
-.htmx-request .sync-ready { display: none; }
+/* htmx indicator on the sync button */
+#sync-btn .htmx-indicator { display: none; }
+#sync-btn.htmx-request .htmx-indicator { display: inline; }
+#sync-btn.htmx-request .sync-ready { display: none; }
+#sync-btn.htmx-request { pointer-events: none; opacity: 0.7; }
 /* Disable form inputs while syncing */
-.htmx-request input, .htmx-request select { pointer-events: none; opacity: 0.6; }
+.vcenter-sync-form:has(#sync-btn.htmx-request) input,
+.vcenter-sync-form:has(#sync-btn.htmx-request) select { pointer-events: none; opacity: 0.7; }
+/* Loading panel - hidden by default, shown during sync */
+#sync-loading-panel { display: none; }
+body:has(#sync-btn.htmx-request) #sync-loading-panel { display: block; }
+/* Hide "no cached data" alerts during sync */
+body:has(#sync-btn.htmx-request) .alert-info { display: none; }
 </style>
 
 <script>

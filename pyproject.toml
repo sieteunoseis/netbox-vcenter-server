@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "netbox-vcenter-server"
-version = "0.4.0"
+version = "0.4.1"
 description = "NetBox plugin for viewing and importing VMs from VMware vCenter servers"
 readme = "README.md"
 license = {text = "Apache-2.0"}
