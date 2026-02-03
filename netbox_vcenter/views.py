@@ -118,17 +118,31 @@ class VCenterDashboardView(View):
         selected_server = request.GET.get("server")
 
         if not selected_server:
-            # Default to first server with cached data, or first server
-            for server in servers:
-                if cached_data.get(server):
-                    selected_server = server
-                    break
-            if not selected_server and servers:
+            # Default to "all" if multiple servers have data, otherwise first server with data
+            servers_with_data = [s for s in servers if cached_data.get(s)]
+            if len(servers_with_data) > 1:
+                selected_server = "all"
+            elif servers_with_data:
+                selected_server = servers_with_data[0]
+            elif servers:
                 selected_server = servers[0]
 
-        # Get VMs for selected server
-        selected_data = cached_data.get(selected_server) if selected_server else None
-        vms = selected_data.get("vms", []) if selected_data else []
+        # Get VMs for selected server (or all servers)
+        if selected_server == "all":
+            # Combine VMs from all servers
+            vms = []
+            for server in servers:
+                server_data = cached_data.get(server)
+                if server_data:
+                    for vm in server_data.get("vms", []):
+                        vm_copy = vm.copy()
+                        vm_copy["source_server"] = server
+                        vms.append(vm_copy)
+        else:
+            selected_data = cached_data.get(selected_server) if selected_server else None
+            vms = selected_data.get("vms", []) if selected_data else []
+            for vm in vms:
+                vm["source_server"] = selected_server
 
         # Sort VMs by name
         vms = sorted(vms, key=lambda x: x.get("name", "").lower())

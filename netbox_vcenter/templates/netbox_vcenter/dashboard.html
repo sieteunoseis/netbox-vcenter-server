@@ -6,6 +6,13 @@
 
 {% block tabs %}
 <ul class="nav nav-tabs">
+    <li class="nav-item">
+        <a class="nav-link {% if selected_server == 'all' %}active{% endif %}"
+           href="?server=all">
+            <i class="mdi mdi-view-list"></i> All
+            <span class="badge bg-primary text-white ms-1">{{ vm_count }}</span>
+        </a>
+    </li>
     {% for server in servers %}
     <li class="nav-item">
         <a class="nav-link {% if server == selected_server %}active{% endif %}"
@@ -20,7 +27,7 @@
     </li>
     {% endfor %}
     <li class="nav-item">
-        <a class="nav-link" href="{% url 'plugins:netbox_vcenter:compare' %}{% if selected_server %}?server={{ selected_server }}{% endif %}">
+        <a class="nav-link" href="{% url 'plugins:netbox_vcenter:compare' %}{% if selected_server and selected_server != 'all' %}?server={{ selected_server }}{% endif %}">
             <i class="mdi mdi-compare"></i> Compare
         </a>
     </li>
@@ -142,7 +149,8 @@
 <div class="card">
     <div class="card-header d-flex justify-content-between align-items-center">
         <h5 class="card-title mb-0">
-            <i class="mdi mdi-server"></i> Virtual Machines from {{ selected_server }}
+            <i class="mdi mdi-server"></i>
+            {% if selected_server == 'all' %}All Virtual Machines{% else %}Virtual Machines from {{ selected_server }}{% endif %}
             <span class="badge bg-info text-white ms-2">{{ vm_count }} VMs</span>
         </h5>
         <button type="button" class="btn btn-success" id="import-selected-btn" disabled>
@@ -158,6 +166,7 @@
                             <input type="checkbox" id="select-all" class="form-check-input">
                         </th>
                         <th>Name</th>
+                        {% if selected_server == 'all' %}<th>Server</th>{% endif %}
                         <th>Power</th>
                         <th>IP Address</th>
                         <th>vCPUs</th>
@@ -172,7 +181,7 @@
                     <tr>
                         <td>
                             <input type="checkbox" class="form-check-input vm-checkbox"
-                                   value="{{ vm.name }}" data-vm-name="{{ vm.name }}">
+                                   value="{{ vm.name }}" data-vm-name="{{ vm.name }}" data-server="{{ vm.source_server }}">
                         </td>
                         <td>
                             <strong>{{ vm.name }}</strong>
@@ -180,6 +189,9 @@
                             <br><small class="text-muted">{{ vm.guest_os }}</small>
                             {% endif %}
                         </td>
+                        {% if selected_server == 'all' %}
+                        <td><small>{{ vm.source_server }}</small></td>
+                        {% endif %}
                         <td>
                             {% if vm.power_state == 'on' %}
                             <span class="badge bg-success text-white">ON</span>
@@ -228,7 +240,12 @@
         </div>
     </div>
 </div>
-{% elif selected_server and not cached_data|get_key:selected_server %}
+{% elif selected_server == 'all' and vm_count == 0 %}
+<div class="alert alert-info">
+    <i class="mdi mdi-information"></i>
+    No cached data from any server. Select a server tab and enter credentials to sync.
+</div>
+{% elif selected_server and selected_server != 'all' and not cached_data|get_key:selected_server %}
 <div class="alert alert-info">
     <i class="mdi mdi-information"></i>
     No cached data for <strong>{{ selected_server }}</strong>.
@@ -263,16 +280,29 @@ document.addEventListener('DOMContentLoaded', function() {
 
     if (importBtn) {
         importBtn.addEventListener('click', function() {
-            const selected = Array.from(document.querySelectorAll('.vm-checkbox:checked'))
-                .map(cb => cb.value);
+            const selectedCheckboxes = Array.from(document.querySelectorAll('.vm-checkbox:checked'));
 
-            if (selected.length === 0) {
+            if (selectedCheckboxes.length === 0) {
                 alert('Please select at least one VM to import.');
                 return;
             }
 
-            const server = '{{ selected_server }}';
-            const vmsJson = encodeURIComponent(JSON.stringify(selected));
+            // Group VMs by server
+            const vmsByServer = {};
+            selectedCheckboxes.forEach(cb => {
+                const server = cb.dataset.server;
+                if (!vmsByServer[server]) vmsByServer[server] = [];
+                vmsByServer[server].push(cb.value);
+            });
+
+            const servers = Object.keys(vmsByServer);
+            if (servers.length > 1) {
+                alert('Selected VMs are from multiple servers. Please select VMs from one server at a time, or use individual server tabs.');
+                return;
+            }
+
+            const server = servers[0];
+            const vmsJson = encodeURIComponent(JSON.stringify(vmsByServer[server]));
             window.location.href = `{% url 'plugins:netbox_vcenter:import' %}?vms=${vmsJson}&server=${server}`;
         });
     }
