@@ -1,6 +1,6 @@
 # NetBox vCenter Server Plugin
 
-<img src="docs/icon.png" alt="NetBox vCenter Server Plugin" width="100" align="right">
+<img src="https://raw.githubusercontent.com/sieteunoseis/netbox-vcenter-server/master/docs/icon.png" alt="NetBox vCenter Server Plugin" width="100" align="right">
 
 A NetBox plugin for viewing and importing VMs from VMware vCenter servers.
 
