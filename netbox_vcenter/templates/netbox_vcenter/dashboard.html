@@ -160,6 +160,7 @@
                         </th>
                         <th>Name</th>
                         <th>Power</th>
+                        <th>IP Address</th>
                         <th>vCPUs</th>
                         <th>Memory</th>
                         <th>Disk</th>
@@ -185,6 +186,16 @@
                             <span class="badge bg-success text-white">ON</span>
                             {% else %}
                             <span class="badge bg-secondary text-white">OFF</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if vm.primary_ip %}
+                            <code>{{ vm.primary_ip }}</code>
+                            {% if vm.ip_addresses|length > 1 %}
+                            <br><small class="text-muted">+{{ vm.ip_addresses|length|add:"-1" }} more</small>
+                            {% endif %}
+                            {% else %}
+                            <span class="text-muted">-</span>
                             {% endif %}
                         </td>
                         <td>{{ vm.vcpus|default:'-' }}</td>

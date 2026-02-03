@@ -113,6 +113,9 @@ class VCenterClient:
                     "datacenter": None,
                     "guest_os": None,
                     "uuid": None,
+                    "ip_addresses": [],
+                    "primary_ip": None,
+                    "interfaces": [],
                 }
 
                 # Get hardware config
@@ -131,6 +134,30 @@ class VCenterClient:
                     if disk_devices:
                         total_kb = sum(d.capacityInKB for d in disk_devices)
                         vm_data["disk_gb"] = round(total_kb / 1048576)  # KB to GB
+
+                # Get network interfaces and IP addresses from VMware Tools
+                if vm.guest:
+                    # Primary IP from guest info
+                    if vm.guest.ipAddress:
+                        vm_data["primary_ip"] = vm.guest.ipAddress
+                        vm_data["ip_addresses"].append(vm.guest.ipAddress)
+
+                    # Get all network interfaces
+                    if vm.guest.net:
+                        for nic in vm.guest.net:
+                            interface = {
+                                "name": nic.network or "Unknown",
+                                "mac": nic.macAddress,
+                                "connected": nic.connected,
+                                "ip_addresses": [],
+                            }
+                            if nic.ipConfig and nic.ipConfig.ipAddress:
+                                for ip_info in nic.ipConfig.ipAddress:
+                                    ip = ip_info.ipAddress
+                                    interface["ip_addresses"].append(ip)
+                                    if ip not in vm_data["ip_addresses"]:
+                                        vm_data["ip_addresses"].append(ip)
+                            vm_data["interfaces"].append(interface)
 
                 # Get cluster and datacenter
                 if vm.runtime.host:
