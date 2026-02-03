@@ -10,6 +10,8 @@ from django.core.cache import cache
 from django.shortcuts import redirect, render
 from django.utils import timezone
 from django.views.generic import View
+from dcim.models import Platform
+from extras.models import Tag
 from ipam.models import IPAddress
 from virtualization.models import Cluster, VMInterface, VirtualMachine
 
@@ -56,6 +58,35 @@ def get_name_match_config() -> tuple[str, str]:
     mode = config.get("name_match_mode", "exact")
     pattern = config.get("name_match_pattern", r"^([^.]+)")
     return mode, pattern
+
+
+def get_import_config() -> dict:
+    """Get the import/sync configuration settings."""
+    config = settings.PLUGINS_CONFIG.get("netbox_vcenter", {})
+    return {
+        "normalize_name": config.get("normalize_imported_name", True),
+        "default_tag": config.get("default_tag", ""),
+        "default_role": config.get("default_role", ""),
+        "default_platform": config.get("default_platform", ""),
+    }
+
+
+def get_name_for_import(vm_name: str, normalize: bool, mode: str, pattern: str) -> str:
+    """
+    Get the name to use when importing a VM.
+
+    Args:
+        vm_name: Original vCenter VM name
+        normalize: Whether to normalize (strip domain, lowercase)
+        mode: Name matching mode for normalization
+        pattern: Regex pattern for regex mode
+
+    Returns:
+        Name to use in NetBox
+    """
+    if normalize:
+        return normalize_name(vm_name, mode, pattern)
+    return vm_name
 
 
 def build_netbox_name_map(mode: str, pattern: str) -> dict[str, str]:
@@ -327,6 +358,37 @@ class VMImportView(View):
         # Get name matching config for duplicate detection
         match_mode, match_pattern = get_name_match_config()
 
+        # Get import configuration
+        import_config = get_import_config()
+        normalize_names = import_config["normalize_name"]
+        default_tag_slug = import_config["default_tag"]
+        default_role_slug = import_config["default_role"]
+        default_platform_slug = import_config["default_platform"]
+
+        # Look up default tag, role, platform if configured
+        default_tag = None
+        default_role = None
+        default_platform = None
+
+        if default_tag_slug:
+            try:
+                default_tag = Tag.objects.get(slug=default_tag_slug)
+            except Tag.DoesNotExist:
+                logger.warning(f"Default tag '{default_tag_slug}' not found in NetBox")
+
+        if default_role_slug:
+            try:
+                from dcim.models import DeviceRole
+                default_role = DeviceRole.objects.get(slug=default_role_slug)
+            except Exception:
+                logger.warning(f"Default role '{default_role_slug}' not found in NetBox")
+
+        if default_platform_slug:
+            try:
+                default_platform = Platform.objects.get(slug=default_platform_slug)
+            except Platform.DoesNotExist:
+                logger.warning(f"Default platform '{default_platform_slug}' not found in NetBox")
+
         # Build map of normalized names to existing NetBox VMs
         existing_vm_map = {}
         for vm in VirtualMachine.objects.all():
@@ -343,6 +405,9 @@ class VMImportView(View):
             vm_name = vm_data.get("name")
             vm_normalized = normalize_name(vm_name, match_mode, match_pattern)
 
+            # Determine name to use for import
+            import_name = get_name_for_import(vm_name, normalize_names, match_mode, match_pattern)
+
             # Check if VM already exists
             existing_vm = existing_vm_map.get(vm_normalized)
 
@@ -355,6 +420,12 @@ class VMImportView(View):
                         existing_vm.disk = vm_data.get("disk_gb")
                         existing_vm.status = "active" if vm_data.get("power_state") == "on" else "offline"
 
+                        # Update role and platform if configured and not already set
+                        if default_role and not existing_vm.role:
+                            existing_vm.role = default_role
+                        if default_platform and not existing_vm.platform:
+                            existing_vm.platform = default_platform
+
                         # Update primary IP if available
                         primary_ip = vm_data.get("primary_ip")
                         if primary_ip:
@@ -362,6 +433,11 @@ class VMImportView(View):
 
                         existing_vm.full_clean()
                         existing_vm.save()
+
+                        # Add tag if configured
+                        if default_tag:
+                            existing_vm.tags.add(default_tag)
+
                         updated += 1
                     except Exception as e:
                         errors.append(f"{vm_name}: {str(e)}")
@@ -374,18 +450,24 @@ class VMImportView(View):
                 # Determine status based on power state
                 status = "active" if vm_data.get("power_state") == "on" else "offline"
 
-                # Create the VM
+                # Create the VM with normalized or original name
                 vm = VirtualMachine(
-                    name=vm_name,
+                    name=import_name,
                     cluster=cluster,
                     vcpus=vm_data.get("vcpus"),
                     memory=vm_data.get("memory_mb"),
                     disk=vm_data.get("disk_gb"),
                     status=status,
+                    role=default_role,
+                    platform=default_platform,
                     comments=f"Imported from vCenter {server} on {timezone.now().strftime('%Y-%m-%d %H:%M')}",
                 )
                 vm.full_clean()
                 vm.save()
+
+                # Add tag if configured
+                if default_tag:
+                    vm.tags.add(default_tag)
 
                 # Set primary IP if available
                 primary_ip = vm_data.get("primary_ip")
@@ -567,3 +649,100 @@ class VMComparisonView(View):
                 "diff_count": len([c for c in comparison["in_both"] if c.get("has_differences")]),
             },
         )
+
+
+class SyncDifferencesView(View):
+    """Sync all VMs with spec differences from vCenter to NetBox."""
+
+    def post(self, request):
+        """Sync VMs that have differences between vCenter and NetBox."""
+        server = request.POST.get("server", "")
+
+        if not server:
+            messages.error(request, "No server specified")
+            return redirect("plugins:netbox_vcenter:compare")
+
+        # Get cached vCenter data
+        cached_data = get_cached_data(server)
+        if not cached_data:
+            messages.error(request, f"No cached data for {server}. Please sync first.")
+            return redirect(f"/plugins/vcenter/compare/?server={server}")
+
+        vcenter_vms = cached_data.get("vms", [])
+
+        # Get name matching config
+        match_mode, match_pattern = get_name_match_config()
+
+        # Get import config for tag/role/platform
+        import_config = get_import_config()
+        default_tag_slug = import_config["default_tag"]
+
+        default_tag = None
+        if default_tag_slug:
+            try:
+                default_tag = Tag.objects.get(slug=default_tag_slug)
+            except Tag.DoesNotExist:
+                pass
+
+        # Build maps
+        vcenter_normalized_map = {}
+        for vm in vcenter_vms:
+            name = vm.get("name", "")
+            normalized = normalize_name(name, match_mode, match_pattern)
+            vcenter_normalized_map[normalized] = vm
+
+        netbox_normalized_map = {}
+        for vm in VirtualMachine.objects.all():
+            normalized = normalize_name(vm.name, match_mode, match_pattern)
+            netbox_normalized_map[normalized] = vm
+
+        # Find VMs in both
+        in_both = set(vcenter_normalized_map.keys()) & set(netbox_normalized_map.keys())
+
+        updated = 0
+        errors = []
+
+        for normalized in in_both:
+            vc_vm = vcenter_normalized_map.get(normalized)
+            nb_vm = netbox_normalized_map.get(normalized)
+
+            if not vc_vm or not nb_vm:
+                continue
+
+            # Check if there are differences
+            has_diff = (
+                vc_vm.get("vcpus") != nb_vm.vcpus
+                or vc_vm.get("memory_mb") != nb_vm.memory
+                or vc_vm.get("disk_gb") != nb_vm.disk
+            )
+
+            if not has_diff:
+                continue
+
+            try:
+                # Update NetBox VM with vCenter specs
+                nb_vm.vcpus = vc_vm.get("vcpus")
+                nb_vm.memory = vc_vm.get("memory_mb")
+                nb_vm.disk = vc_vm.get("disk_gb")
+                nb_vm.status = "active" if vc_vm.get("power_state") == "on" else "offline"
+
+                nb_vm.full_clean()
+                nb_vm.save()
+
+                # Add tag if configured
+                if default_tag:
+                    nb_vm.tags.add(default_tag)
+
+                updated += 1
+            except Exception as e:
+                errors.append(f"{nb_vm.name}: {str(e)}")
+                logger.error(f"Error syncing VM {nb_vm.name}: {e}")
+
+        if updated:
+            messages.success(request, f"Synced {updated} VM(s) from {server}")
+        if errors:
+            messages.warning(request, f"Failed: {len(errors)} VM(s): {'; '.join(errors[:3])}")
+        if not updated and not errors:
+            messages.info(request, "No VMs needed syncing")
+
+        return redirect(f"/plugins/vcenter/compare/?server={server}")

@@ -63,7 +63,7 @@ PLUGINS = [
 
 PLUGINS_CONFIG = {
     'netbox_vcenter': {
-        # List of vCenter servers to choose from
+        # Required: List of vCenter servers to choose from
         'vcenter_servers': [
             'vc-server1.example.com',
             'vc-server2.example.com',
@@ -71,6 +71,19 @@ PLUGINS_CONFIG = {
         # Connection settings
         'timeout': 60,       # Timeout for vCenter connections (seconds)
         'verify_ssl': False, # SSL verification (False for self-signed certs)
+        # MFA/2FA settings (optional)
+        'mfa_enabled': True,  # Show MFA warning in UI
+        'mfa_label': 'Duo',   # Label shown: "Duo", "2FA", "MFA"
+        'mfa_message': 'Check your authenticator after clicking Connect & Sync.',
+        # Name matching for duplicate detection
+        # Options: "exact" (full name), "hostname" (strip domain), "regex"
+        'name_match_mode': 'hostname',
+        'name_match_pattern': r'^([^.]+)',  # Used with "regex" mode
+        # Import settings
+        'normalize_imported_name': True,  # "WebServer01.example.com" -> "webserver01"
+        'default_tag': '',      # Tag slug to apply (e.g., "vcenter-sync")
+        'default_role': '',     # Role slug (e.g., "server")
+        'default_platform': '', # Platform slug (e.g., "vmware")
     }
 }
 ```

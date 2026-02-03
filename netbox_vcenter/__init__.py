@@ -28,15 +28,12 @@ class VcenterConfig(PluginConfig):
     # Default configuration values
     default_settings = {
         # List of vCenter servers to choose from
-        "vcenter_servers": [
-            "vc-msb.ohsu.edu",
-            "vc-dcw.ohsu.edu",
-        ],
+        "vcenter_servers": [],
         # Connection settings
         "timeout": 60,  # Connection timeout in seconds (longer for MFA)
         "verify_ssl": False,  # SSL verification (False for self-signed certs)
         # MFA/2FA settings
-        "mfa_enabled": True,  # Whether to show MFA warning
+        "mfa_enabled": False,  # Whether to show MFA warning
         "mfa_label": "MFA",  # Short label: "Duo", "2FA", "MFA", etc.
         "mfa_message": "Check your authenticator after clicking Connect & Sync.",
         # Name matching for duplicate detection
@@ -46,6 +43,16 @@ class VcenterConfig(PluginConfig):
         # Example: r"^([^.]+)" extracts hostname (same as "hostname" mode)
         # Example: r"^(\w+\d+)" extracts letters followed by numbers
         "name_match_pattern": r"^([^.]+)",
+        # Import/sync settings
+        # Whether to normalize VM names on import (strip domain, lowercase)
+        # e.g., "WebServer01.example.com" -> "webserver01"
+        "normalize_imported_name": True,
+        # Tag slug to apply to imported/synced VMs (must exist in NetBox, or leave empty)
+        "default_tag": "",
+        # Optional default role slug for imported VMs (must exist in NetBox, or leave empty)
+        "default_role": "",
+        # Optional default platform slug for imported VMs (must exist in NetBox, or leave empty)
+        "default_platform": "",
     }
 
 

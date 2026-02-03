@@ -10,7 +10,7 @@ menu = PluginMenu(
             (
                 PluginMenuItem(
                     link="plugins:netbox_vcenter:dashboard",
-                    link_text="Dashboard",
+                    link_text="Import Dashboard",
                     permissions=["virtualization.view_virtualmachine"],
                 ),
                 PluginMenuItem(
