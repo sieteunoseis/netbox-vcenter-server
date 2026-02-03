@@ -52,7 +52,13 @@
                 </div>
                 {% endif %}
 
-                <form method="post">
+                <!-- Error/status messages from htmx -->
+                <div id="sync-status"></div>
+
+                <form hx-post="{% url 'plugins:netbox_vcenter:sync' %}"
+                      hx-target="#sync-status"
+                      hx-indicator="#sync-loading"
+                      hx-disabled-elt="#sync-btn">
                     {% csrf_token %}
 
                     <div class="mb-3">
@@ -78,8 +84,14 @@
                         <br><small class="text-muted">{{ form.verify_ssl.help_text }}</small>
                     </div>
 
-                    <button type="submit" class="btn btn-primary">
-                        <i class="mdi mdi-sync"></i> Connect & Sync
+                    <button type="submit" class="btn btn-primary" id="sync-btn">
+                        <span id="sync-loading" class="htmx-indicator">
+                            <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+                            Connecting...
+                        </span>
+                        <span class="sync-ready">
+                            <i class="mdi mdi-sync"></i> Connect & Sync
+                        </span>
                     </button>
                 </form>
             </div>
@@ -252,6 +264,15 @@
     Enter your credentials and click "Connect & Sync" to fetch VMs.
 </div>
 {% endif %}
+
+<style>
+/* Hide loading indicator by default, show when htmx is processing */
+.htmx-indicator { display: none; }
+.htmx-request .htmx-indicator { display: inline; }
+.htmx-request .sync-ready { display: none; }
+/* Disable form inputs while syncing */
+.htmx-request input, .htmx-request select { pointer-events: none; opacity: 0.6; }
+</style>
 
 <script>
 document.addEventListener('DOMContentLoaded', function() {

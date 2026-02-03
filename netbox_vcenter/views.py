@@ -310,6 +310,55 @@ class VCenterRefreshView(View):
         return redirect(f"/plugins/vcenter/?server={server}")
 
 
+class VCenterSyncView(View):
+    """Async sync endpoint for htmx - connects to vCenter and caches VMs."""
+
+    def post(self, request):
+        """Connect to vCenter and fetch VMs, return htmx response."""
+        from django.http import HttpResponse
+
+        form = VCenterConnectForm(request.POST)
+
+        if not form.is_valid():
+            return HttpResponse(
+                '<div class="alert alert-danger"><i class="mdi mdi-alert-circle"></i> '
+                "Invalid form data. Please check your inputs.</div>",
+                status=400,
+            )
+
+        server = form.cleaned_data["server"]
+        username = form.cleaned_data["username"]
+        password = form.cleaned_data["password"]
+        verify_ssl = form.cleaned_data.get("verify_ssl", False)
+
+        # Connect and fetch VMs (this is the slow part with Duo MFA)
+        vms, error = connect_and_fetch(server, username, password, verify_ssl)
+
+        if error:
+            return HttpResponse(
+                f'<div class="alert alert-danger"><i class="mdi mdi-alert-circle"></i> '
+                f"<strong>Connection Failed:</strong> {error}</div>",
+                status=400,
+            )
+
+        # Cache the data (no timeout - persists until manual refresh)
+        cache_data = {
+            "vms": vms,
+            "timestamp": timezone.now().isoformat(),
+            "server": server,
+            "count": len(vms),
+        }
+        cache.set(get_cache_key(server), cache_data, None)
+
+        # Add success message for the redirected page
+        messages.success(request, f"Successfully synced {len(vms)} VMs from {server}")
+
+        # Return HX-Redirect header to trigger page reload with new data
+        response = HttpResponse(status=200)
+        response["HX-Redirect"] = f"/plugins/vcenter/?server={server}"
+        return response
+
+
 class VMImportView(View):
     """Import selected VMs from vCenter to NetBox."""
 
