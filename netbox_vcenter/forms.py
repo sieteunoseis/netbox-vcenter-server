@@ -5,6 +5,16 @@ from django.conf import settings
 from virtualization.models import Cluster
 
 
+class ClusterChoiceField(forms.ModelChoiceField):
+    """Custom ModelChoiceField that displays Cluster Group > Cluster Name."""
+
+    def label_from_instance(self, obj):
+        """Return label in 'Group > Name' format."""
+        if obj.group:
+            return f"{obj.group.name} > {obj.name}"
+        return obj.name
+
+
 class VCenterConnectForm(forms.Form):
     """Form for connecting to a vCenter server."""
 
@@ -41,8 +51,8 @@ class VCenterConnectForm(forms.Form):
 class VMImportForm(forms.Form):
     """Form for importing VMs from vCenter to NetBox."""
 
-    cluster = forms.ModelChoiceField(
-        queryset=Cluster.objects.all(),
+    cluster = ClusterChoiceField(
+        queryset=Cluster.objects.select_related("group").order_by("group__name", "name"),
         label="Target Cluster",
         help_text="NetBox cluster to assign the imported VMs to",
         widget=forms.Select(attrs={"class": "form-select"}),
