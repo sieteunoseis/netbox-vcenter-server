@@ -55,6 +55,13 @@ class VMImportForm(forms.Form):
         widget=forms.HiddenInput(),
         help_text="Source vCenter server",
     )
+    update_existing = forms.BooleanField(
+        label="Update existing VMs",
+        required=False,
+        initial=False,
+        help_text="Update vCPUs, memory, disk, status, and IP address for VMs that already exist in NetBox",
+        widget=forms.CheckboxInput(attrs={"class": "form-check-input"}),
+    )
 
     def clean_selected_vms(self):
         """Parse the selected VMs JSON string."""

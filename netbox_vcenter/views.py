@@ -10,7 +10,8 @@ from django.core.cache import cache
 from django.shortcuts import redirect, render
 from django.utils import timezone
 from django.views.generic import View
-from virtualization.models import Cluster, VirtualMachine
+from ipam.models import IPAddress
+from virtualization.models import Cluster, VMInterface, VirtualMachine
 
 from .client import connect_and_fetch
 from .forms import VCenterConnectForm, VMImportForm
@@ -297,6 +298,7 @@ class VMImportView(View):
         selected_vm_names = form.cleaned_data["selected_vms"]
         server = form.cleaned_data["vcenter_server"]
         cluster = form.cleaned_data["cluster"]
+        update_existing = form.cleaned_data.get("update_existing", False)
 
         # Get VM details from cache
         cached_data = get_cached_data(server)
@@ -310,23 +312,48 @@ class VMImportView(View):
 
         # Get name matching config for duplicate detection
         match_mode, match_pattern = get_name_match_config()
-        existing_normalized = {
-            normalize_name(name, match_mode, match_pattern)
-            for name in VirtualMachine.objects.values_list("name", flat=True)
-        }
 
-        # Import VMs
+        # Build map of normalized names to existing NetBox VMs
+        existing_vm_map = {}
+        for vm in VirtualMachine.objects.all():
+            normalized = normalize_name(vm.name, match_mode, match_pattern)
+            existing_vm_map[normalized] = vm
+
+        # Import/Update VMs
         created = 0
+        updated = 0
         skipped = 0
         errors = []
 
         for vm_data in vms_to_import:
             vm_name = vm_data.get("name")
-
-            # Check if VM already exists using configured matching
             vm_normalized = normalize_name(vm_name, match_mode, match_pattern)
-            if vm_normalized in existing_normalized:
-                skipped += 1
+
+            # Check if VM already exists
+            existing_vm = existing_vm_map.get(vm_normalized)
+
+            if existing_vm:
+                if update_existing:
+                    try:
+                        # Update existing VM specs
+                        existing_vm.vcpus = vm_data.get("vcpus")
+                        existing_vm.memory = vm_data.get("memory_mb")
+                        existing_vm.disk = vm_data.get("disk_gb")
+                        existing_vm.status = "active" if vm_data.get("power_state") == "on" else "offline"
+
+                        # Update primary IP if available
+                        primary_ip = vm_data.get("primary_ip")
+                        if primary_ip:
+                            self._update_vm_primary_ip(existing_vm, primary_ip)
+
+                        existing_vm.full_clean()
+                        existing_vm.save()
+                        updated += 1
+                    except Exception as e:
+                        errors.append(f"{vm_name}: {str(e)}")
+                        logger.error(f"Error updating VM {vm_name}: {e}")
+                else:
+                    skipped += 1
                 continue
 
             try:
@@ -345,6 +372,12 @@ class VMImportView(View):
                 )
                 vm.full_clean()
                 vm.save()
+
+                # Set primary IP if available
+                primary_ip = vm_data.get("primary_ip")
+                if primary_ip:
+                    self._update_vm_primary_ip(vm, primary_ip)
+
                 created += 1
 
             except Exception as e:
@@ -353,13 +386,63 @@ class VMImportView(View):
 
         # Build result message
         if created:
-            messages.success(request, f"Successfully imported {created} VM(s) to cluster '{cluster.name}'")
+            messages.success(request, f"Created {created} VM(s) in cluster '{cluster.name}'")
+        if updated:
+            messages.success(request, f"Updated {updated} existing VM(s)")
         if skipped:
-            messages.info(request, f"Skipped {skipped} VM(s) that already exist in NetBox")
+            messages.info(request, f"Skipped {skipped} VM(s) (already exist, update not selected)")
         if errors:
-            messages.warning(request, f"Failed to import {len(errors)} VM(s): {'; '.join(errors[:3])}")
+            messages.warning(request, f"Failed: {len(errors)} VM(s): {'; '.join(errors[:3])}")
 
         return redirect("plugins:netbox_vcenter:dashboard")
+
+    def _update_vm_primary_ip(self, vm, ip_address):
+        """
+        Update or create the primary IP address for a VM.
+
+        Creates a VMInterface if needed, then creates/updates the IPAddress.
+        """
+        if not ip_address:
+            return
+
+        # Skip IPv6 link-local addresses
+        if ip_address.startswith("fe80:"):
+            return
+
+        # Get or create the default interface
+        interface, _ = VMInterface.objects.get_or_create(
+            virtual_machine=vm,
+            name="eth0",
+            defaults={"enabled": True},
+        )
+
+        # Determine if IPv4 or IPv6
+        is_ipv6 = ":" in ip_address
+
+        # Add CIDR notation if not present
+        if "/" not in ip_address:
+            ip_address = f"{ip_address}/32" if not is_ipv6 else f"{ip_address}/128"
+
+        # Get or create the IP address
+        ip_obj, created = IPAddress.objects.get_or_create(
+            address=ip_address,
+            defaults={"assigned_object": interface},
+        )
+
+        # If IP exists but not assigned to this interface, update it
+        if not created and ip_obj.assigned_object != interface:
+            ip_obj.assigned_object = interface
+            ip_obj.save()
+
+        # Set as primary IP on the VM
+        if is_ipv6:
+            if vm.primary_ip6 != ip_obj:
+                vm.primary_ip6 = ip_obj
+                vm.save()
+        else:
+            if vm.primary_ip4 != ip_obj:
+                vm.primary_ip4 = ip_obj
+                vm.save()
 
 
 class VMComparisonView(View):

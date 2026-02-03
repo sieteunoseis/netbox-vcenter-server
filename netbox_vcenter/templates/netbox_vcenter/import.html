@@ -14,9 +14,10 @@
             </div>
             <div class="card-body">
                 {% if existing_count > 0 %}
-                <div class="alert alert-warning">
-                    <i class="mdi mdi-alert"></i>
-                    <strong>{{ existing_count }} VM(s)</strong> already exist in NetBox and will be skipped.
+                <div class="alert alert-info">
+                    <i class="mdi mdi-information"></i>
+                    <strong>{{ existing_count }} VM(s)</strong> already exist in NetBox.
+                    Check "Update existing VMs" below to sync their specs.
                 </div>
                 {% endif %}
 
@@ -84,6 +85,16 @@
                         </small>
                     </div>
 
+                    {% if existing_count > 0 %}
+                    <div class="mb-3 form-check">
+                        {{ form.update_existing }}
+                        <label class="form-check-label" for="{{ form.update_existing.id_for_label }}">
+                            <strong>{{ form.update_existing.label }}</strong>
+                        </label>
+                        <br><small class="text-muted">{{ form.update_existing.help_text }}</small>
+                    </div>
+                    {% endif %}
+
                     <hr>
 
                     <div class="d-flex justify-content-between">
@@ -92,19 +103,53 @@
                             <i class="mdi mdi-arrow-left"></i> Cancel
                         </a>
                         <button type="submit" class="btn btn-success">
-                            <i class="mdi mdi-import"></i> Import {{ new_count }} VM(s)
+                            <i class="mdi mdi-import"></i>
+                            {% if new_count > 0 %}Import {{ new_count }} VM(s){% else %}Process{% endif %}
                         </button>
                     </div>
                 </form>
                 {% else %}
-                <div class="alert alert-info">
+                <!-- All VMs exist - show update-only form -->
+                <div class="alert alert-info mb-3">
                     <i class="mdi mdi-information"></i>
-                    All selected VMs already exist in NetBox. Nothing to import.
+                    All {{ existing_count }} selected VM(s) already exist in NetBox.
                 </div>
-                <a href="{% url 'plugins:netbox_vcenter:dashboard' %}?server={{ server }}"
-                   class="btn btn-outline-secondary">
-                    <i class="mdi mdi-arrow-left"></i> Back to Dashboard
-                </a>
+
+                <form method="post">
+                    {% csrf_token %}
+                    {{ form.selected_vms }}
+                    {{ form.vcenter_server }}
+
+                    <div class="mb-3">
+                        <label class="form-label">
+                            <strong>Target Cluster</strong> <span class="text-danger">*</span>
+                        </label>
+                        {{ form.cluster }}
+                        <small class="text-muted">
+                            Select the NetBox cluster (used for any new VMs).
+                        </small>
+                    </div>
+
+                    <div class="mb-3 form-check">
+                        {{ form.update_existing }}
+                        <label class="form-check-label" for="{{ form.update_existing.id_for_label }}">
+                            <strong>{{ form.update_existing.label }}</strong>
+                        </label>
+                        <br><small class="text-muted">{{ form.update_existing.help_text }}</small>
+                    </div>
+
+                    <hr>
+
+                    <div class="d-flex justify-content-between">
+                        <a href="{% url 'plugins:netbox_vcenter:dashboard' %}?server={{ server }}"
+                           class="btn btn-outline-secondary">
+                            <i class="mdi mdi-arrow-left"></i> Cancel
+                        </a>
+                        <button type="submit" class="btn btn-primary">
+                            <i class="mdi mdi-sync"></i> Update Existing VMs
+                        </button>
+                    </div>
+                </form>
                 {% endif %}
             </div>
         </div>
@@ -119,15 +164,16 @@
             </div>
             <div class="card-body">
                 <ul class="mb-0">
-                    <li>VMs that already exist in NetBox (by name) will be skipped.</li>
-                    <li>Power state determines VM status:
+                    <li><strong>New VMs</strong> are created in the selected cluster.</li>
+                    <li><strong>Update existing</strong> syncs:
                         <ul>
-                            <li>Powered On → <span class="badge bg-success text-white">Active</span></li>
-                            <li>Powered Off → <span class="badge bg-secondary text-white">Offline</span></li>
+                            <li>vCPUs, Memory, Disk</li>
+                            <li>Power state → Status</li>
+                            <li>Primary IP address</li>
                         </ul>
                     </li>
-                    <li>vCPUs, Memory, and Disk will be copied from vCenter.</li>
-                    <li>Import source is recorded in comments.</li>
+                    <li>Name matching uses configured mode (hostname, exact, or regex).</li>
+                    <li>IP addresses create interfaces as needed.</li>
                 </ul>
             </div>
         </div>
