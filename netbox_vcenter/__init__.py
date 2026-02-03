@@ -33,8 +33,12 @@ class VcenterConfig(PluginConfig):
             "vc-dcw.ohsu.edu",
         ],
         # Connection settings
-        "timeout": 60,  # Connection timeout in seconds (longer for Duo MFA)
+        "timeout": 60,  # Connection timeout in seconds (longer for MFA)
         "verify_ssl": False,  # SSL verification (False for self-signed certs)
+        # MFA/2FA settings
+        "mfa_enabled": True,  # Whether to show MFA warning
+        "mfa_label": "2FA",  # Short label: "Duo", "2FA", "MFA", etc.
+        "mfa_message": "After clicking \"Connect & Sync\", check your device for an authentication prompt.",
     }
 
 

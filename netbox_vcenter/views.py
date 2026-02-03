@@ -71,6 +71,16 @@ class VCenterDashboardView(View):
         # Sort VMs by name
         vms = sorted(vms, key=lambda x: x.get("name", "").lower())
 
+        # Check which VMs already exist in NetBox (case-insensitive)
+        existing_names_lower = {name.lower() for name in VirtualMachine.objects.values_list("name", flat=True)}
+        for vm in vms:
+            vm["exists_in_netbox"] = vm.get("name", "").lower() in existing_names_lower
+
+        # Get MFA settings
+        mfa_enabled = config.get("mfa_enabled", True)
+        mfa_label = config.get("mfa_label", "2FA")
+        mfa_message = config.get("mfa_message", "Check your device for an authentication prompt.")
+
         return render(
             request,
             self.template_name,
@@ -81,6 +91,9 @@ class VCenterDashboardView(View):
                 "selected_server": selected_server,
                 "vms": vms,
                 "vm_count": len(vms),
+                "mfa_enabled": mfa_enabled,
+                "mfa_label": mfa_label,
+                "mfa_message": mfa_message,
             },
         )
 
@@ -117,6 +130,11 @@ class VCenterDashboardView(View):
         config = settings.PLUGINS_CONFIG.get("netbox_vcenter", {})
         servers = config.get("vcenter_servers", [])
 
+        # Get MFA settings
+        mfa_enabled = config.get("mfa_enabled", True)
+        mfa_label = config.get("mfa_label", "2FA")
+        mfa_message = config.get("mfa_message", "Check your device for an authentication prompt.")
+
         return render(
             request,
             self.template_name,
@@ -127,6 +145,9 @@ class VCenterDashboardView(View):
                 "selected_server": servers[0] if servers else None,
                 "vms": [],
                 "vm_count": 0,
+                "mfa_enabled": mfa_enabled,
+                "mfa_label": mfa_label,
+                "mfa_message": mfa_message,
             },
         )
 
@@ -170,10 +191,10 @@ class VMImportView(View):
         all_vms = cached_data.get("vms", [])
         vms_to_import = [vm for vm in all_vms if vm.get("name") in selected_vm_names]
 
-        # Check which VMs already exist in NetBox
-        existing_names = set(VirtualMachine.objects.values_list("name", flat=True))
+        # Check which VMs already exist in NetBox (case-insensitive)
+        existing_names_lower = {name.lower() for name in VirtualMachine.objects.values_list("name", flat=True)}
         for vm in vms_to_import:
-            vm["exists_in_netbox"] = vm.get("name") in existing_names
+            vm["exists_in_netbox"] = vm.get("name", "").lower() in existing_names_lower
 
         form = VMImportForm(
             initial={
@@ -224,8 +245,8 @@ class VMImportView(View):
         for vm_data in vms_to_import:
             vm_name = vm_data.get("name")
 
-            # Check if VM already exists
-            if VirtualMachine.objects.filter(name=vm_name).exists():
+            # Check if VM already exists (case-insensitive)
+            if VirtualMachine.objects.filter(name__iexact=vm_name).exists():
                 skipped += 1
                 continue
 
