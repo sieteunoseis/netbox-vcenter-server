@@ -5,7 +5,7 @@ import ssl
 from typing import Optional
 
 from pyVim.connect import Disconnect, SmartConnect
-from pyVmomi import vim
+from pyVmomi import vim, vmodl
 
 logger = logging.getLogger(__name__)
 
@@ -89,93 +89,285 @@ class VCenterClient:
 
     def fetch_all_vms(self) -> list:
         """
-        Fetch all virtual machines from vCenter.
+        Fetch all virtual machines from vCenter using PropertyCollector.
+
+        Uses PropertyCollector for efficient batch retrieval of VM properties,
+        which is significantly faster than iterating through VMs one-by-one,
+        especially for large environments (1000+ VMs).
 
         Returns:
             List of VM dictionaries with details
         """
-        logger.info(f"Fetching VMs from {self.server}")
+        logger.info(f"Fetching VMs from {self.server} using PropertyCollector")
 
-        vms = self._get_objects_of_type(vim.VirtualMachine)
-        vm_list = []
+        # Define the properties we need to fetch
+        vm_properties = [
+            "name",
+            "runtime.powerState",
+            "runtime.host",
+            "config.hardware.numCPU",
+            "config.hardware.memoryMB",
+            "config.hardware.device",
+            "config.guestFullName",
+            "config.uuid",
+            "guest.ipAddress",
+            "guest.net",
+        ]
 
-        for vm in vms:
-            try:
-                vm_data = {
-                    "name": vm.name,
-                    "power_state": "on" if vm.runtime.powerState == "poweredOn" else "off",
-                    "vcpus": None,
-                    "memory_mb": None,
-                    "disk_gb": None,
-                    "cluster": None,
-                    "datacenter": None,
-                    "guest_os": None,
-                    "uuid": None,
-                    "ip_addresses": [],
-                    "primary_ip": None,
-                    "interfaces": [],
-                }
+        # Build property collector objects
+        container = self.content.viewManager.CreateContainerView(
+            self.content.rootFolder, [vim.VirtualMachine], True
+        )
 
-                # Get hardware config
-                if vm.config:
-                    vm_data["vcpus"] = vm.config.hardware.numCPU
-                    vm_data["memory_mb"] = vm.config.hardware.memoryMB
-                    vm_data["guest_os"] = vm.config.guestFullName
-                    vm_data["uuid"] = vm.config.uuid
+        try:
+            # Create traversal spec to traverse the container view
+            traversal_spec = vmodl.query.PropertyCollector.TraversalSpec(
+                name="traverseEntities",
+                path="view",
+                skip=False,
+                type=vim.view.ContainerView,
+            )
 
-                    # Calculate total disk capacity
-                    disk_devices = [
-                        device for device in vm.config.hardware.device if isinstance(device, vim.vm.device.VirtualDisk)
-                    ]
-                    if disk_devices:
-                        total_kb = sum(d.capacityInKB for d in disk_devices)
-                        vm_data["disk_gb"] = round(total_kb / 1048576)  # KB to GB
+            # Property spec - what properties to collect
+            property_spec = vmodl.query.PropertyCollector.PropertySpec(
+                type=vim.VirtualMachine,
+                pathSet=vm_properties,
+                all=False,
+            )
 
-                # Get network interfaces and IP addresses from VMware Tools
-                if vm.guest:
-                    # Primary IP from guest info
-                    if vm.guest.ipAddress:
-                        vm_data["primary_ip"] = vm.guest.ipAddress
-                        vm_data["ip_addresses"].append(vm.guest.ipAddress)
+            # Object spec - where to start and how to traverse
+            object_spec = vmodl.query.PropertyCollector.ObjectSpec(
+                obj=container,
+                skip=True,
+                selectSet=[traversal_spec],
+            )
 
-                    # Get all network interfaces
-                    if vm.guest.net:
-                        for nic in vm.guest.net:
-                            interface = {
-                                "name": nic.network or "Unknown",
-                                "mac": nic.macAddress,
-                                "connected": nic.connected,
-                                "ip_addresses": [],
-                            }
-                            if nic.ipConfig and nic.ipConfig.ipAddress:
-                                for ip_info in nic.ipConfig.ipAddress:
-                                    ip = ip_info.ipAddress
-                                    interface["ip_addresses"].append(ip)
-                                    if ip not in vm_data["ip_addresses"]:
-                                        vm_data["ip_addresses"].append(ip)
-                            vm_data["interfaces"].append(interface)
+            # Filter spec combining property and object specs
+            filter_spec = vmodl.query.PropertyCollector.FilterSpec(
+                objectSet=[object_spec],
+                propSet=[property_spec],
+            )
 
-                # Get cluster and datacenter
-                if vm.runtime.host:
-                    host = vm.runtime.host
-                    if host.parent and isinstance(host.parent, vim.ClusterComputeResource):
-                        vm_data["cluster"] = host.parent.name
-                    # Walk up to find datacenter
-                    parent = host.parent
-                    while parent:
-                        if isinstance(parent, vim.Datacenter):
-                            vm_data["datacenter"] = parent.name
+            # Retrieve properties with pagination support for large datasets
+            options = vmodl.query.PropertyCollector.RetrieveOptions(maxObjects=500)
+            result = self.content.propertyCollector.RetrievePropertiesEx(
+                specSet=[filter_spec],
+                options=options,
+            )
+
+            # Collect all results (handles pagination via ContinueRetrievePropertiesEx)
+            objects = []
+            while result:
+                objects.extend(result.objects)
+                if result.token:
+                    result = self.content.propertyCollector.ContinueRetrievePropertiesEx(
+                        token=result.token
+                    )
+                else:
+                    break
+
+            logger.info(f"PropertyCollector returned {len(objects)} VMs")
+
+            # Pre-fetch host -> cluster/datacenter mappings to avoid repeated lookups
+            host_info_cache = self._build_host_info_cache()
+
+            # Process the results
+            vm_list = []
+            for obj in objects:
+                try:
+                    vm_data = self._process_vm_properties(obj, host_info_cache)
+                    if vm_data:
+                        vm_list.append(vm_data)
+                except Exception as e:
+                    vm_name = "unknown"
+                    for prop in obj.propSet or []:
+                        if prop.name == "name":
+                            vm_name = prop.val
                             break
-                        parent = getattr(parent, "parent", None)
+                    logger.warning(f"Error processing VM {vm_name}: {e}")
+                    continue
 
-                vm_list.append(vm_data)
+            logger.info(f"Fetched {len(vm_list)} VMs from {self.server}")
+            return vm_list
 
-            except Exception as e:
-                logger.warning(f"Error processing VM {vm.name}: {e}")
-                continue
+        finally:
+            container.Destroy()
 
-        logger.info(f"Fetched {len(vm_list)} VMs from {self.server}")
-        return vm_list
+    def _build_host_info_cache(self) -> dict:
+        """
+        Pre-fetch host -> cluster/datacenter mappings.
+
+        This avoids walking the parent hierarchy for each VM, which is slow
+        when done thousands of times.
+
+        Returns:
+            Dict mapping host moref key -> {"cluster": name, "datacenter": name}
+        """
+        cache = {}
+
+        try:
+            # Get all hosts with their parent info using PropertyCollector
+            container = self.content.viewManager.CreateContainerView(
+                self.content.rootFolder, [vim.HostSystem], True
+            )
+
+            try:
+                traversal_spec = vmodl.query.PropertyCollector.TraversalSpec(
+                    name="traverseEntities",
+                    path="view",
+                    skip=False,
+                    type=vim.view.ContainerView,
+                )
+
+                property_spec = vmodl.query.PropertyCollector.PropertySpec(
+                    type=vim.HostSystem,
+                    pathSet=["name", "parent"],
+                    all=False,
+                )
+
+                object_spec = vmodl.query.PropertyCollector.ObjectSpec(
+                    obj=container,
+                    skip=True,
+                    selectSet=[traversal_spec],
+                )
+
+                filter_spec = vmodl.query.PropertyCollector.FilterSpec(
+                    objectSet=[object_spec],
+                    propSet=[property_spec],
+                )
+
+                result = self.content.propertyCollector.RetrievePropertiesEx(
+                    specSet=[filter_spec],
+                    options=vmodl.query.PropertyCollector.RetrieveOptions(),
+                )
+
+                # Process host results
+                host_objects = []
+                while result:
+                    host_objects.extend(result.objects)
+                    if result.token:
+                        result = self.content.propertyCollector.ContinueRetrievePropertiesEx(
+                            token=result.token
+                        )
+                    else:
+                        break
+
+                for host_obj in host_objects:
+                    host_key = str(host_obj.obj)
+                    host_parent = None
+
+                    for prop in host_obj.propSet or []:
+                        if prop.name == "parent":
+                            host_parent = prop.val
+
+                    if host_parent:
+                        info = {"cluster": None, "datacenter": None}
+
+                        # Check if parent is a cluster
+                        if isinstance(host_parent, vim.ClusterComputeResource):
+                            info["cluster"] = host_parent.name
+
+                        # Walk up to find datacenter
+                        parent = host_parent
+                        while parent:
+                            if isinstance(parent, vim.Datacenter):
+                                info["datacenter"] = parent.name
+                                break
+                            parent = getattr(parent, "parent", None)
+
+                        cache[host_key] = info
+
+            finally:
+                container.Destroy()
+
+        except Exception as e:
+            logger.warning(f"Error building host info cache: {e}")
+
+        return cache
+
+    def _process_vm_properties(self, obj, host_info_cache: dict) -> dict:
+        """
+        Process PropertyCollector result for a single VM.
+
+        Args:
+            obj: PropertyCollector ObjectContent for a VM
+            host_info_cache: Pre-built host -> cluster/datacenter mapping
+
+        Returns:
+            VM data dictionary
+        """
+        vm_data = {
+            "name": None,
+            "power_state": "off",
+            "vcpus": None,
+            "memory_mb": None,
+            "disk_gb": None,
+            "cluster": None,
+            "datacenter": None,
+            "guest_os": None,
+            "uuid": None,
+            "ip_addresses": [],
+            "primary_ip": None,
+            "interfaces": [],
+        }
+
+        # Extract properties from the result
+        props = {prop.name: prop.val for prop in (obj.propSet or [])}
+
+        vm_data["name"] = props.get("name")
+
+        # Power state
+        power_state = props.get("runtime.powerState")
+        if power_state:
+            vm_data["power_state"] = "on" if str(power_state) == "poweredOn" else "off"
+
+        # Hardware config
+        vm_data["vcpus"] = props.get("config.hardware.numCPU")
+        vm_data["memory_mb"] = props.get("config.hardware.memoryMB")
+        vm_data["guest_os"] = props.get("config.guestFullName")
+        vm_data["uuid"] = props.get("config.uuid")
+
+        # Calculate disk capacity from devices
+        devices = props.get("config.hardware.device", [])
+        if devices:
+            disk_devices = [d for d in devices if isinstance(d, vim.vm.device.VirtualDisk)]
+            if disk_devices:
+                total_kb = sum(d.capacityInKB for d in disk_devices)
+                vm_data["disk_gb"] = round(total_kb / 1048576)  # KB to GB
+
+        # Primary IP from guest info
+        primary_ip = props.get("guest.ipAddress")
+        if primary_ip:
+            vm_data["primary_ip"] = primary_ip
+            vm_data["ip_addresses"].append(primary_ip)
+
+        # Network interfaces from guest.net
+        guest_net = props.get("guest.net")
+        if guest_net:
+            for nic in guest_net:
+                interface = {
+                    "name": nic.network or "Unknown",
+                    "mac": nic.macAddress,
+                    "connected": nic.connected,
+                    "ip_addresses": [],
+                }
+                if nic.ipConfig and nic.ipConfig.ipAddress:
+                    for ip_info in nic.ipConfig.ipAddress:
+                        ip = ip_info.ipAddress
+                        interface["ip_addresses"].append(ip)
+                        if ip not in vm_data["ip_addresses"]:
+                            vm_data["ip_addresses"].append(ip)
+                vm_data["interfaces"].append(interface)
+
+        # Get cluster and datacenter from host cache
+        host = props.get("runtime.host")
+        if host:
+            host_key = str(host)
+            host_info = host_info_cache.get(host_key, {})
+            vm_data["cluster"] = host_info.get("cluster")
+            vm_data["datacenter"] = host_info.get("datacenter")
+
+        return vm_data
 
     def fetch_clusters(self) -> list:
         """
