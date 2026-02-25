@@ -7,17 +7,17 @@ Supports multiple vCenter servers with per-server caching and VM import to NetBo
 
 from netbox.plugins import PluginConfig
 
-__version__ = "0.4.2"
+__version__ = "0.4.3"
 
 
 class VcenterConfig(PluginConfig):
     """Plugin configuration for NetBox vCenter integration."""
 
     name = "netbox_vcenter"
-    verbose_name = "vCenter"
+    verbose_name = "NetBox vCenter"
     description = "View and import VMs from VMware vCenter servers"
     version = __version__
-    author = "sieteunoseis"
+    author = "Jeremy Worden"
     author_email = "jeremy.worden@gmail.com"
     base_url = "vcenter"
     min_version = "4.0.0"
