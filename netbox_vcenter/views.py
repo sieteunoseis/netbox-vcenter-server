@@ -13,7 +13,7 @@ from django.utils import timezone
 from django.views.generic import View
 from extras.models import Tag
 from ipam.models import IPAddress
-from virtualization.models import Cluster, VirtualMachine, VMInterface
+from virtualization.models import VirtualMachine, VMInterface
 
 from .client import connect_and_fetch
 from .forms import VCenterConnectForm, VMImportForm
@@ -504,7 +504,7 @@ class VMImportView(View):
                         # Update existing VM specs
                         existing_vm.vcpus = vm_data.get("vcpus")
                         existing_vm.memory = vm_data.get("memory_mb")
-                        existing_vm.disk = vm_data.get("disk_gb")
+                        existing_vm.disk = vm_data.get("disk_mb")
                         existing_vm.status = "active" if vm_data.get("power_state") == "on" else "offline"
 
                         # Update role and platform if configured and not already set
@@ -556,7 +556,7 @@ class VMImportView(View):
                     cluster=cluster,
                     vcpus=vm_data.get("vcpus"),
                     memory=vm_data.get("memory_mb"),
-                    disk=vm_data.get("disk_gb"),
+                    disk=vm_data.get("disk_mb"),
                     status=status,
                     role=default_role,
                     platform=vm_platform,
@@ -698,7 +698,7 @@ class VMComparisonView(View):
                 "netbox": {
                     "vcpus": nb_vm.vcpus if nb_vm else None,
                     "memory_mb": nb_vm.memory if nb_vm else None,
-                    "disk_gb": nb_vm.disk if nb_vm else None,
+                    "disk_mb": nb_vm.disk if nb_vm else None,
                     "status": nb_vm.status if nb_vm else None,
                 },
                 "has_differences": False,
@@ -709,7 +709,7 @@ class VMComparisonView(View):
                 diff["has_differences"] = True
             if vc_vm.get("memory_mb") != diff["netbox"]["memory_mb"]:
                 diff["has_differences"] = True
-            if vc_vm.get("disk_gb") != diff["netbox"]["disk_gb"]:
+            if vc_vm.get("disk_mb") != diff["netbox"]["disk_mb"]:
                 diff["has_differences"] = True
 
             comparison["in_both"].append(diff)
@@ -813,7 +813,7 @@ class SyncDifferencesView(View):
             has_diff = (
                 vc_vm.get("vcpus") != nb_vm.vcpus
                 or vc_vm.get("memory_mb") != nb_vm.memory
-                or vc_vm.get("disk_gb") != nb_vm.disk
+                or vc_vm.get("disk_mb") != nb_vm.disk
             )
 
             if not has_diff:
@@ -823,7 +823,7 @@ class SyncDifferencesView(View):
                 # Update NetBox VM with vCenter specs
                 nb_vm.vcpus = vc_vm.get("vcpus")
                 nb_vm.memory = vc_vm.get("memory_mb")
-                nb_vm.disk = vc_vm.get("disk_gb")
+                nb_vm.disk = vc_vm.get("disk_mb")
                 nb_vm.status = "active" if vc_vm.get("power_state") == "on" else "offline"
 
                 nb_vm.full_clean()

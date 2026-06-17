@@ -7,7 +7,7 @@ Supports multiple vCenter servers with per-server caching and VM import to NetBo
 
 from netbox.plugins import PluginConfig
 
-__version__ = "0.4.3"
+__version__ = "0.4.4"
 
 
 class VcenterConfig(PluginConfig):

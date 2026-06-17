@@ -100,7 +100,7 @@
                                 </td>
                                 <td>{{ vm.vcpus|default:'-' }}</td>
                                 <td>{{ vm.memory_mb|default:'-' }}</td>
-                                <td>{{ vm.disk_gb|default:'-' }}</td>
+                                <td>{{ vm.disk_mb|default:'-' }}</td>
                                 <td>{{ vm.cluster|default:'-' }}</td>
                             </tr>
                             {% endfor %}
@@ -154,12 +154,12 @@
                                 <td>{{ vm.netbox.memory_mb|default:'-' }}</td>
                             </tr>
                             {% endif %}
-                            {% if vm.vcenter.disk_gb != vm.netbox.disk_gb %}
+                            {% if vm.vcenter.disk_mb != vm.netbox.disk_mb %}
                             <tr>
                                 <td><strong>{{ vm.name }}</strong></td>
-                                <td>Disk (GB)</td>
-                                <td>{{ vm.vcenter.disk_gb|default:'-' }}</td>
-                                <td>{{ vm.netbox.disk_gb|default:'-' }}</td>
+                                <td>Disk (MB)</td>
+                                <td>{{ vm.vcenter.disk_mb|default:'-' }}</td>
+                                <td>{{ vm.netbox.disk_mb|default:'-' }}</td>
                             </tr>
                             {% endif %}
                             {% endif %}

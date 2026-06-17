@@ -115,9 +115,7 @@ class VCenterClient:
         ]
 
         # Build property collector objects
-        container = self.content.viewManager.CreateContainerView(
-            self.content.rootFolder, [vim.VirtualMachine], True
-        )
+        container = self.content.viewManager.CreateContainerView(self.content.rootFolder, [vim.VirtualMachine], True)
 
         try:
             # Create traversal spec to traverse the container view
@@ -160,9 +158,7 @@ class VCenterClient:
             while result:
                 objects.extend(result.objects)
                 if result.token:
-                    result = self.content.propertyCollector.ContinueRetrievePropertiesEx(
-                        token=result.token
-                    )
+                    result = self.content.propertyCollector.ContinueRetrievePropertiesEx(token=result.token)
                 else:
                     break
 
@@ -207,9 +203,7 @@ class VCenterClient:
 
         try:
             # Get all hosts with their parent info using PropertyCollector
-            container = self.content.viewManager.CreateContainerView(
-                self.content.rootFolder, [vim.HostSystem], True
-            )
+            container = self.content.viewManager.CreateContainerView(self.content.rootFolder, [vim.HostSystem], True)
 
             try:
                 traversal_spec = vmodl.query.PropertyCollector.TraversalSpec(
@@ -246,9 +240,7 @@ class VCenterClient:
                 while result:
                     host_objects.extend(result.objects)
                     if result.token:
-                        result = self.content.propertyCollector.ContinueRetrievePropertiesEx(
-                            token=result.token
-                        )
+                        result = self.content.propertyCollector.ContinueRetrievePropertiesEx(token=result.token)
                     else:
                         break
 
@@ -301,7 +293,7 @@ class VCenterClient:
             "power_state": "off",
             "vcpus": None,
             "memory_mb": None,
-            "disk_gb": None,
+            "disk_mb": None,
             "cluster": None,
             "datacenter": None,
             "guest_os": None,
@@ -333,7 +325,10 @@ class VCenterClient:
             disk_devices = [d for d in devices if isinstance(d, vim.vm.device.VirtualDisk)]
             if disk_devices:
                 total_kb = sum(d.capacityInKB for d in disk_devices)
-                vm_data["disk_gb"] = round(total_kb / 1048576)  # KB to GB
+                # NetBox stores VirtualMachine.disk in megabytes (it renders
+                # GB/TB via DISK_BASE_UNIT scaling). vSphere reports KB, so
+                # convert KB -> MB. Storing GB here under-reported by ~1000x.
+                vm_data["disk_mb"] = round(total_kb / 1024)  # KB to MB
 
         # Primary IP from guest info
         primary_ip = props.get("guest.ipAddress")
@@ -427,7 +422,7 @@ def connect_and_fetch(
         return vms, None
     except vim.fault.InvalidLogin as e:
         logger.error(f"vCenter authentication failed: {e.msg}")
-        return None, f"Authentication failed: Invalid username or password"
+        return None, "Authentication failed: Invalid username or password"
     except Exception as e:
         logger.error(f"vCenter connection failed: {e}")
         return None, f"Connection failed: {str(e)}"

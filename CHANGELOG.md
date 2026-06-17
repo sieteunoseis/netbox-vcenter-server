@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.4] - 2026-06-17
+
+### Fixed
+- **Incorrect disk size** ([#8](https://github.com/sieteunoseis/netbox-vcenter-server/issues/8)) - NetBox stores `VirtualMachine.disk` in megabytes (it renders GB/TB on display via `DISK_BASE_UNIT`). The plugin was converting vSphere's KB capacity to **gigabytes** and writing that into the MB field, under-reporting disk size by ~1000x (e.g. a 1.6 TB VM showed as 1.66 GB). Disk capacity is now converted KB→MB. The `disk_gb` data key was renamed to `disk_mb` and the import/compare/dashboard tables now label the column in MB.
+
 ## [0.2.0] - 2026-02-03
 
 ### Added

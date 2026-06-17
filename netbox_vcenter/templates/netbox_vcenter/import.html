@@ -56,7 +56,7 @@
                                 </td>
                                 <td>{{ vm.vcpus|default:'-' }}</td>
                                 <td>{{ vm.memory_mb|default:'-' }} MB</td>
-                                <td>{{ vm.disk_gb|default:'-' }} GB</td>
+                                <td>{{ vm.disk_mb|default:'-' }} MB</td>
                                 <td>
                                     {% if vm.exists_in_netbox %}
                                     <span class="text-muted">Skip</span>
