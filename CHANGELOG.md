@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-08-13
+
+### Fixed
+- **Duplicate IP addresses on import** ([#11](https://github.com/sieteunoseis/netbox-vcenter-server/issues/11)) - VM interface import always searched IPAM for an exact `<host>/32` (or `/128`) match before creating a new `IPAddress`. If the host was already tracked in IPAM under its real subnet mask (e.g. `/24`), the string comparison missed it and a duplicate `/32` record was created. Lookups now match on the host address regardless of prefix length, and newly created records derive their prefix length from the most specific containing NetBox `Prefix` instead of hardcoding `/32`.
+
+### Added
+- **`default_vrf` and `default_tenant` settings** ([#11](https://github.com/sieteunoseis/netbox-vcenter-server/issues/11)) - Optional plugin settings to scope IP dedup/creation to a specific VRF and to tag newly created IP addresses with a tenant.
+- **Pre-select discovered cluster on import** ([#9](https://github.com/sieteunoseis/netbox-vcenter-server/issues/9)) - The import screen's "Target Cluster" dropdown now defaults to the vCenter-discovered cluster (for single-VM or same-cluster bulk imports) when it maps to exactly one NetBox `Cluster`, while remaining fully editable.
+- **Import dashboard search** ([#6](https://github.com/sieteunoseis/netbox-vcenter-server/issues/6)) - A live search box above the VM list filters by name, cluster, IP address, or datacenter. A new Datacenter column is also shown (already collected from vCenter but not previously surfaced). "Select all" now only selects VMs currently visible under the search filter.
+- **Sync VM disks** ([#5](https://github.com/sieteunoseis/netbox-vcenter-server/issues/5)) - Each of a VM's hard disks is now synced as a NetBox `VirtualDisk` (name + size), on both import and update. Disks removed in vCenter are left untouched in NetBox rather than deleted.
+- **Sync all VM interfaces** ([#3](https://github.com/sieteunoseis/netbox-vcenter-server/issues/3)) - All of a VM's network adapters are synced (not just the one holding the primary IP), each as a NetBox `VMInterface` with its MAC address, connected/enabled state, and IP address(es) attached. Interfaces are named to align with vSphere's own adapter numbering ("Network Adapter 1" -> `eth1`). IP lookups reuse the same host-based dedup as the primary-IP fix in #11, now applied per interface. Per-interface MTU is not synced yet (requires resolving the backing vSwitch/portgroup, deferred as a follow-up); interfaces removed in vCenter are left untouched in NetBox rather than deleted.
+
 ## [0.4.4] - 2026-06-17
 
 ### Fixed

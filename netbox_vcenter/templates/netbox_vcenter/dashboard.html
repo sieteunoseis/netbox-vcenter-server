@@ -185,6 +185,10 @@
         </button>
     </div>
     <div class="card-body p-0">
+        <div class="p-3 border-bottom">
+            <input type="text" class="form-control" id="vm-search"
+                   placeholder="Search by name, cluster, IP, or datacenter...">
+        </div>
         <div class="table-responsive">
             <table class="table table-hover table-striped mb-0" id="vm-table">
                 <thead class="table-light">
@@ -200,12 +204,14 @@
                         <th>Memory</th>
                         <th>Disk</th>
                         <th>Cluster</th>
+                        <th>Datacenter</th>
                         <th>NetBox</th>
                     </tr>
                 </thead>
                 <tbody>
                     {% for vm in vms %}
-                    <tr>
+                    <tr class="vm-row"
+                        data-search="{{ vm.name|lower }} {{ vm.cluster|default:''|lower }} {{ vm.primary_ip|default:''|lower }} {{ vm.datacenter|default:''|lower }}">
                         <td>
                             <input type="checkbox" class="form-check-input vm-checkbox"
                                    value="{{ vm.name }}" data-vm-name="{{ vm.name }}" data-server="{{ vm.source_server }}">
@@ -249,6 +255,7 @@
                             {% endif %}
                         </td>
                         <td>{{ vm.cluster|default:'-' }}</td>
+                        <td>{{ vm.datacenter|default:'-' }}</td>
                         <td>
                             {% if vm.exists_in_netbox %}
                             <span class="badge bg-info text-white" title="Already in NetBox">
@@ -299,6 +306,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const selectAll = document.getElementById('select-all');
     const checkboxes = document.querySelectorAll('.vm-checkbox');
     const importBtn = document.getElementById('import-selected-btn');
+    const searchInput = document.getElementById('vm-search');
 
     function updateImportButton() {
         const selected = document.querySelectorAll('.vm-checkbox:checked');
@@ -310,7 +318,13 @@ document.addEventListener('DOMContentLoaded', function() {
 
     if (selectAll) {
         selectAll.addEventListener('change', function() {
-            checkboxes.forEach(cb => cb.checked = this.checked);
+            // Only affect rows visible under the current search filter
+            checkboxes.forEach(cb => {
+                const row = cb.closest('.vm-row');
+                if (!row || row.style.display !== 'none') {
+                    cb.checked = this.checked;
+                }
+            });
             updateImportButton();
         });
     }
@@ -318,6 +332,16 @@ document.addEventListener('DOMContentLoaded', function() {
     checkboxes.forEach(cb => {
         cb.addEventListener('change', updateImportButton);
     });
+
+    if (searchInput) {
+        searchInput.addEventListener('input', function() {
+            const term = this.value.trim().toLowerCase();
+            document.querySelectorAll('.vm-row').forEach(row => {
+                const haystack = row.dataset.search || '';
+                row.style.display = haystack.includes(term) ? '' : 'none';
+            });
+        });
+    }
 
     if (importBtn) {
         importBtn.addEventListener('click', function() {

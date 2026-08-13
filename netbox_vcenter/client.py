@@ -294,6 +294,7 @@ class VCenterClient:
             "vcpus": None,
             "memory_mb": None,
             "disk_mb": None,
+            "disks": [],
             "cluster": None,
             "datacenter": None,
             "guest_os": None,
@@ -330,29 +331,51 @@ class VCenterClient:
                 # convert KB -> MB. Storing GB here under-reported by ~1000x.
                 vm_data["disk_mb"] = round(total_kb / 1024)  # KB to MB
 
+                # Per-disk name and size (also MB) for individual VirtualDisk sync
+                vm_data["disks"] = [
+                    {
+                        "name": d.deviceInfo.label,
+                        "size_mb": round(d.capacityInKB / 1024),
+                    }
+                    for d in disk_devices
+                ]
+
         # Primary IP from guest info
         primary_ip = props.get("guest.ipAddress")
         if primary_ip:
             vm_data["primary_ip"] = primary_ip
             vm_data["ip_addresses"].append(primary_ip)
 
-        # Network interfaces from guest.net
-        guest_net = props.get("guest.net")
-        if guest_net:
-            for nic in guest_net:
-                interface = {
-                    "name": nic.network or "Unknown",
-                    "mac": nic.macAddress,
-                    "connected": nic.connected,
-                    "ip_addresses": [],
-                }
-                if nic.ipConfig and nic.ipConfig.ipAddress:
-                    for ip_info in nic.ipConfig.ipAddress:
-                        ip = ip_info.ipAddress
-                        interface["ip_addresses"].append(ip)
-                        if ip not in vm_data["ip_addresses"]:
-                            vm_data["ip_addresses"].append(ip)
-                vm_data["interfaces"].append(interface)
+        # Map MAC -> guest-reported IP addresses (from guest.net, requires
+        # VMware Tools) so the hardware NICs below can be enriched with IPs.
+        ips_by_mac = {}
+        for nic in props.get("guest.net") or []:
+            if not nic.macAddress:
+                continue
+            ips = []
+            if nic.ipConfig and nic.ipConfig.ipAddress:
+                ips = [ip_info.ipAddress for ip_info in nic.ipConfig.ipAddress]
+            ips_by_mac[nic.macAddress.lower()] = ips
+
+        # Network interfaces from the VM's hardware devices, in vSphere's own
+        # adapter order (aligns NetBox "ethN" to vSphere's "Network Adapter
+        # N"), enriched with guest-reported IPs matched by MAC address.
+        if devices:
+            nic_devices = [d for d in devices if isinstance(d, vim.vm.device.VirtualEthernetCard)]
+            for index, nic in enumerate(nic_devices, start=1):
+                mac = nic.macAddress
+                ip_addresses = ips_by_mac.get(mac.lower(), []) if mac else []
+                vm_data["interfaces"].append(
+                    {
+                        "name": f"eth{index}",
+                        "mac": mac,
+                        "connected": bool(nic.connectable.connected) if nic.connectable else False,
+                        "ip_addresses": ip_addresses,
+                    }
+                )
+                for ip in ip_addresses:
+                    if ip not in vm_data["ip_addresses"]:
+                        vm_data["ip_addresses"].append(ip)
 
         # Get cluster and datacenter from host cache
         host = props.get("runtime.host")

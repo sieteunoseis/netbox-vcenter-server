@@ -7,7 +7,7 @@ Supports multiple vCenter servers with per-server caching and VM import to NetBo
 
 from netbox.plugins import PluginConfig
 
-__version__ = "0.4.4"
+__version__ = "0.5.0"
 
 
 class VcenterConfig(PluginConfig):
@@ -53,6 +53,11 @@ class VcenterConfig(PluginConfig):
         "default_role": "",
         # Optional default platform slug for imported VMs (must exist in NetBox, or leave empty)
         "default_platform": "",
+        # Optional VRF name to scope IP address dedup/creation during import (must exist in NetBox, or leave empty)
+        # Existing IPAM records are only reused within this VRF, and new IP addresses are created in it
+        "default_vrf": "",
+        # Optional default tenant slug applied to IP addresses created during import (must exist in NetBox)
+        "default_tenant": "",
         # Platform mappings - auto-map vCenter guest OS to NetBox platform
         # Each mapping has a "pattern" (regex to match against guest OS) and "platform" (NetBox platform slug)
         # Mappings are evaluated in order; first match wins

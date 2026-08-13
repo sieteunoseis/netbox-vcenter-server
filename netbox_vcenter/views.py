@@ -4,16 +4,18 @@ import json
 import logging
 import re
 
-from dcim.models import Platform
+from dcim.models import MACAddress, Platform
 from django.conf import settings
 from django.contrib import messages
+from django.contrib.contenttypes.models import ContentType
 from django.core.cache import cache
 from django.shortcuts import redirect, render
 from django.utils import timezone
 from django.views.generic import View
 from extras.models import Tag
-from ipam.models import IPAddress
-from virtualization.models import VirtualMachine, VMInterface
+from ipam.models import VRF, IPAddress, Prefix
+from tenancy.models import Tenant
+from virtualization.models import Cluster, VirtualDisk, VirtualMachine, VMInterface
 
 from .client import connect_and_fetch
 from .forms import VCenterConnectForm, VMImportForm
@@ -68,6 +70,8 @@ def get_import_config() -> dict:
         "default_tag": config.get("default_tag", ""),
         "default_role": config.get("default_role", ""),
         "default_platform": config.get("default_platform", ""),
+        "default_vrf": config.get("default_vrf", ""),
+        "default_tenant": config.get("default_tenant", ""),
         "platform_mappings": config.get("platform_mappings", []),
     }
 
@@ -398,12 +402,23 @@ class VMImportView(View):
             vm_normalized = normalize_name(vm.get("name", ""), match_mode, match_pattern)
             vm["exists_in_netbox"] = vm_normalized in existing_normalized
 
-        form = VMImportForm(
-            initial={
-                "selected_vms": json.dumps(selected_vm_names),
-                "vcenter_server": server,
-            }
-        )
+        initial = {
+            "selected_vms": json.dumps(selected_vm_names),
+            "vcenter_server": server,
+        }
+
+        # Pre-select the discovered vCenter cluster if every selected VM
+        # reports the same one and it maps to exactly one NetBox Cluster,
+        # while leaving the dropdown editable.
+        discovered_clusters = {vm.get("cluster") for vm in vms_to_import}
+        if len(discovered_clusters) == 1:
+            (discovered_cluster_name,) = discovered_clusters
+            if discovered_cluster_name:
+                matches = Cluster.objects.filter(name__iexact=discovered_cluster_name)
+                if matches.count() == 1:
+                    initial["cluster"] = matches.first().pk
+
+        form = VMImportForm(initial=initial)
 
         return render(
             request,
@@ -449,12 +464,16 @@ class VMImportView(View):
         default_tag_slug = import_config["default_tag"]
         default_role_slug = import_config["default_role"]
         default_platform_slug = import_config["default_platform"]
+        default_vrf_name = import_config["default_vrf"]
+        default_tenant_slug = import_config["default_tenant"]
         platform_mappings = import_config["platform_mappings"]
 
-        # Look up default tag, role, platform if configured
+        # Look up default tag, role, platform, VRF, tenant if configured
         default_tag = None
         default_role = None
         default_platform = None
+        default_vrf = None
+        default_tenant = None
 
         if default_tag_slug:
             try:
@@ -475,6 +494,20 @@ class VMImportView(View):
                 default_platform = Platform.objects.get(slug=default_platform_slug)
             except Platform.DoesNotExist:
                 logger.warning(f"Default platform '{default_platform_slug}' not found in NetBox")
+
+        if default_vrf_name:
+            try:
+                default_vrf = VRF.objects.get(name=default_vrf_name)
+            except VRF.DoesNotExist:
+                logger.warning(f"Default VRF '{default_vrf_name}' not found in NetBox")
+            except VRF.MultipleObjectsReturned:
+                logger.warning(f"Multiple VRFs named '{default_vrf_name}' found in NetBox; skipping VRF scoping")
+
+        if default_tenant_slug:
+            try:
+                default_tenant = Tenant.objects.get(slug=default_tenant_slug)
+            except Tenant.DoesNotExist:
+                logger.warning(f"Default tenant '{default_tenant_slug}' not found in NetBox")
 
         # Build map of normalized names to existing NetBox VMs
         existing_vm_map = {}
@@ -520,13 +553,17 @@ class VMImportView(View):
                                 if mapped_platform:
                                     existing_vm.platform = mapped_platform
 
-                        # Update primary IP if available
-                        primary_ip = vm_data.get("primary_ip")
-                        if primary_ip:
-                            self._update_vm_primary_ip(existing_vm, primary_ip)
+                        # Sync interfaces (IP, MAC, connected status) if available
+                        if vm_data.get("interfaces") or vm_data.get("primary_ip"):
+                            self._sync_vm_interfaces(existing_vm, vm_data, vrf=default_vrf, tenant=default_tenant)
 
                         existing_vm.full_clean()
                         existing_vm.save()
+
+                        # Sync disks if available
+                        disks = vm_data.get("disks")
+                        if disks:
+                            self._sync_vm_disks(existing_vm, disks)
 
                         # Add tag if configured
                         if default_tag:
@@ -569,10 +606,14 @@ class VMImportView(View):
                 if default_tag:
                     vm.tags.add(default_tag)
 
-                # Set primary IP if available
-                primary_ip = vm_data.get("primary_ip")
-                if primary_ip:
-                    self._update_vm_primary_ip(vm, primary_ip)
+                # Sync interfaces (IP, MAC, connected status) if available
+                if vm_data.get("interfaces") or vm_data.get("primary_ip"):
+                    self._sync_vm_interfaces(vm, vm_data, vrf=default_vrf, tenant=default_tenant)
+
+                # Sync disks if available
+                disks = vm_data.get("disks")
+                if disks:
+                    self._sync_vm_disks(vm, disks)
 
                 created += 1
 
@@ -592,53 +633,136 @@ class VMImportView(View):
 
         return redirect("plugins:netbox_vcenter:dashboard")
 
-    def _update_vm_primary_ip(self, vm, ip_address):
+    def _find_or_create_ip(self, host, interface, is_ipv6, vrf=None, tenant=None):
         """
-        Update or create the primary IP address for a VM.
+        Find an existing IPAM record for a host address, or create one.
 
-        Creates a VMInterface if needed, then creates/updates the IPAddress.
+        Reuses an existing record for the host regardless of its prefix
+        length, instead of creating a duplicate under a hardcoded /32 (or
+        /128). When a new record is created, its prefix length is derived
+        from the most specific containing NetBox Prefix.
         """
-        if not ip_address:
-            return
+        existing_qs = IPAddress.objects.filter(address__net_host=host)
+        if vrf:
+            existing_qs = existing_qs.filter(vrf=vrf)
+        ip_obj = existing_qs.first()
 
-        # Skip IPv6 link-local addresses
-        if ip_address.startswith("fe80:"):
-            return
+        if ip_obj is None:
+            prefix_qs = Prefix.objects.filter(prefix__net_contains_or_equals=host)
+            if vrf:
+                prefix_qs = prefix_qs.filter(vrf=vrf)
+            containing_prefix = max(prefix_qs, key=lambda p: p.prefix.prefixlen, default=None)
+            mask_length = containing_prefix.prefix.prefixlen if containing_prefix else (128 if is_ipv6 else 32)
 
-        # Get or create the default interface
-        interface, _ = VMInterface.objects.get_or_create(
-            virtual_machine=vm,
-            name="eth0",
-            defaults={"enabled": True},
-        )
-
-        # Determine if IPv4 or IPv6
-        is_ipv6 = ":" in ip_address
-
-        # Add CIDR notation if not present
-        if "/" not in ip_address:
-            ip_address = f"{ip_address}/32" if not is_ipv6 else f"{ip_address}/128"
-
-        # Get or create the IP address
-        ip_obj, created = IPAddress.objects.get_or_create(
-            address=ip_address,
-            defaults={"assigned_object": interface},
-        )
-
-        # If IP exists but not assigned to this interface, update it
-        if not created and ip_obj.assigned_object != interface:
+            ip_obj = IPAddress(
+                address=f"{host}/{mask_length}",
+                assigned_object=interface,
+                vrf=vrf,
+                tenant=tenant,
+            )
+            ip_obj.save()
+        elif ip_obj.assigned_object != interface:
             ip_obj.assigned_object = interface
             ip_obj.save()
 
-        # Set as primary IP on the VM
-        if is_ipv6:
-            if vm.primary_ip6 != ip_obj:
-                vm.primary_ip6 = ip_obj
-                vm.save()
-        else:
-            if vm.primary_ip4 != ip_obj:
-                vm.primary_ip4 = ip_obj
-                vm.save()
+        return ip_obj
+
+    def _sync_vm_interfaces(self, vm, vm_data, vrf=None, tenant=None):
+        """
+        Sync all of a VM's network interfaces, attaching their IP addresses
+        and setting the VM's primary IP.
+
+        Interfaces are named to match vSphere's own adapter numbering (e.g.
+        "Network Adapter 1" -> "eth1"). Each reported IP is reused from
+        IPAM if it already exists (see _find_or_create_ip) and assigned to
+        the specific interface that reported it, rather than a single
+        catch-all interface.
+        """
+        interfaces_data = vm_data.get("interfaces") or []
+        primary_ip = vm_data.get("primary_ip")
+        primary_ip_obj = None
+        default_interface = None
+        vminterface_ct = ContentType.objects.get_for_model(VMInterface)
+
+        for iface_data in interfaces_data:
+            name = iface_data.get("name")
+            if not name:
+                continue
+
+            connected = bool(iface_data.get("connected", True))
+            vm_interface, created = VMInterface.objects.get_or_create(
+                virtual_machine=vm,
+                name=name,
+                defaults={"enabled": connected},
+            )
+            if not created and vm_interface.enabled != connected:
+                vm_interface.enabled = connected
+                vm_interface.save()
+
+            if default_interface is None:
+                default_interface = vm_interface
+
+            mac = iface_data.get("mac")
+            if mac:
+                mac_obj, _ = MACAddress.objects.get_or_create(
+                    mac_address=mac,
+                    assigned_object_type=vminterface_ct,
+                    assigned_object_id=vm_interface.pk,
+                )
+                if vm_interface.primary_mac_address_id != mac_obj.pk:
+                    vm_interface.primary_mac_address = mac_obj
+                    vm_interface.save()
+
+            for ip in iface_data.get("ip_addresses", []):
+                if not ip or ip.startswith("fe80:"):
+                    continue
+                is_ipv6 = ":" in ip
+                ip_obj = self._find_or_create_ip(ip, vm_interface, is_ipv6, vrf=vrf, tenant=tenant)
+                if primary_ip and ip == primary_ip:
+                    primary_ip_obj = ip_obj
+
+        # Fall back to a default interface if the primary IP wasn't reported
+        # under any specific NIC (e.g. mismatched guest.net data).
+        if primary_ip and primary_ip_obj is None and not primary_ip.startswith("fe80:"):
+            if default_interface is None:
+                default_interface, _ = VMInterface.objects.get_or_create(
+                    virtual_machine=vm, name="eth1", defaults={"enabled": True}
+                )
+            is_ipv6 = ":" in primary_ip
+            primary_ip_obj = self._find_or_create_ip(primary_ip, default_interface, is_ipv6, vrf=vrf, tenant=tenant)
+
+        if primary_ip_obj:
+            is_ipv6 = ":" in primary_ip
+            if is_ipv6:
+                if vm.primary_ip6 != primary_ip_obj:
+                    vm.primary_ip6 = primary_ip_obj
+                    vm.save()
+            else:
+                if vm.primary_ip4 != primary_ip_obj:
+                    vm.primary_ip4 = primary_ip_obj
+                    vm.save()
+
+    def _sync_vm_disks(self, vm, disks):
+        """
+        Create or update the VM's VirtualDisk objects from vCenter disk data.
+
+        Matches disks by name (e.g. "Hard disk 1"). Disks removed in vCenter
+        are left untouched in NetBox rather than deleted.
+        """
+        for disk in disks:
+            name = disk.get("name")
+            size_mb = disk.get("size_mb")
+            if not name or size_mb is None:
+                continue
+
+            disk_obj, created = VirtualDisk.objects.get_or_create(
+                virtual_machine=vm,
+                name=name,
+                defaults={"size": size_mb},
+            )
+            if not created and disk_obj.size != size_mb:
+                disk_obj.size = size_mb
+                disk_obj.save()
 
 
 class VMComparisonView(View):

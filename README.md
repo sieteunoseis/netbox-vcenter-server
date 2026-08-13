@@ -84,9 +84,28 @@ PLUGINS_CONFIG = {
         'default_tag': '',      # Tag slug to apply (e.g., "vcenter-sync")
         'default_role': '',     # Role slug (e.g., "server")
         'default_platform': '', # Platform slug (e.g., "vmware")
+        'default_vrf': '',      # VRF name to scope IP dedup/creation (e.g., "management")
+        'default_tenant': '',   # Tenant slug applied to IP addresses created during import
     }
 }
 ```
+
+All of a VM's network adapters are synced, not just the primary one: each
+becomes a NetBox `VMInterface` named to match vSphere's own adapter number
+(vSphere's "Network Adapter 1" becomes NetBox interface `eth1`), with its
+MAC address, connected/enabled state, and IP addresses attached. IP lookups
+reuse an existing IPAM record for the address whenever one already exists
+(regardless of its prefix length), instead of creating a duplicate `/32`.
+When a new record does need to be created, its prefix length is derived
+from the most specific containing NetBox `Prefix`. Set `default_vrf` if you
+use VRFs, so lookups and new records stay scoped to the correct one; set
+`default_tenant` to tag newly created IP addresses with a tenant.
+Per-interface MTU is not synced yet (vSphere reports this at the
+vSwitch/portgroup level, not directly on the adapter).
+
+Each of a VM's hard disks is also synced as a NetBox `VirtualDisk` (name and
+size). Disks and interfaces removed from a VM in vCenter are left in place
+in NetBox rather than deleted.
 
 ## Usage
 
