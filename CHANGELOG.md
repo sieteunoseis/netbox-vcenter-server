@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-08-25
+
+### Added
+- **Empty-config warning on dashboard** ([#12](https://github.com/sieteunoseis/netbox-vcenter-server/issues/12)) - When `PLUGINS_CONFIG["netbox_vcenter"]["vcenter_servers"]` is empty (e.g. missing/misconfigured), the dashboard previously showed nothing at all — an empty server dropdown and an empty Cache Status table, with no indication why. It now shows an explicit alert with the exact config key expected and common causes (wrong `PLUGINS_CONFIG` key, `configuration.py` not importing `PLUGINS_CONFIG` from a separate `plugins.py`, processes not restarted after a config change).
+
 ## [0.5.0] - 2026-08-13
 
 ### Fixed

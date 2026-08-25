@@ -35,6 +35,31 @@
 {% endblock %}
 
 {% block content %}
+{% if not servers %}
+<div class="alert alert-danger">
+    <h4 class="alert-heading"><i class="mdi mdi-alert-circle"></i> No vCenter servers configured</h4>
+    <p class="mb-2">
+        <code>PLUGINS_CONFIG["netbox_vcenter"]["vcenter_servers"]</code> is empty or missing, so there is
+        nothing to show in the server dropdown or the Cache Status table below.
+    </p>
+    <p class="mb-2">Things to check:</p>
+    <ul class="mb-2">
+        <li>Your NetBox <code>configuration.py</code> defines <code>vcenter_servers</code> as a list under the
+            <code>"netbox_vcenter"</code> key of <code>PLUGINS_CONFIG</code> (not <code>"netbox-vcenter-server"</code>
+            or another name).</li>
+        <li>If you split plugin settings into a separate file (e.g. <code>plugins.py</code>), confirm
+            <code>configuration.py</code> actually imports <code>PLUGINS_CONFIG</code> from it — a common Docker
+            setup mistake is importing <code>PLUGINS</code> but forgetting <code>PLUGINS_CONFIG</code>, which loads
+            the plugin with no settings.</li>
+        <li>All NetBox processes (web <em>and</em> worker/RQ containers) were restarted after the change, since
+            config is only read at process startup.</li>
+    </ul>
+    <p class="mb-0 small">
+        You can verify what NetBox actually loaded with:
+        <code>manage.py shell -c "from django.conf import settings; print(settings.PLUGINS_CONFIG.get('netbox_vcenter'))"</code>
+    </p>
+</div>
+{% endif %}
 <div class="row mb-4">
     <!-- Connection Form -->
     <div class="col-md-5">
