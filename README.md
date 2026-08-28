@@ -68,6 +68,16 @@ PLUGINS_CONFIG = {
             'vc-server1.example.com',
             'vc-server2.example.com',
         ],
+        # Optional: saved credentials per server, to skip the manual login form.
+        # Intended for a dedicated read-only service account that does not require
+        # MFA - servers without an entry here still show the manual login form
+        # (e.g. for MFA-enabled accounts).
+        'vcenter_credentials': {
+            'vc-server1.example.com': {
+                'username': 'svc-netbox@vsphere.local',
+                'password': 'changeme',
+            },
+        },
         # Connection settings
         'timeout': 60,       # Timeout for vCenter connections (seconds)
         'verify_ssl': False, # SSL verification (False for self-signed certs)

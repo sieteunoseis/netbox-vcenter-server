@@ -173,6 +173,23 @@ def get_all_cached_data() -> dict:
     return cached_data
 
 
+def get_servers_with_credentials() -> list:
+    """List configured vCenter servers that have saved credentials."""
+    config = settings.PLUGINS_CONFIG.get("netbox_vcenter", {})
+    servers = config.get("vcenter_servers", [])
+    credentials = config.get("vcenter_credentials", {})
+    return [server for server in servers if credentials.get(server)]
+
+
+def resolve_credentials(server: str, form: VCenterConnectForm) -> tuple:
+    """Resolve the username/password to use, falling back to saved config credentials."""
+    config = settings.PLUGINS_CONFIG.get("netbox_vcenter", {})
+    stored = config.get("vcenter_credentials", {}).get(server, {})
+    username = form.cleaned_data.get("username") or stored.get("username", "")
+    password = form.cleaned_data.get("password") or stored.get("password", "")
+    return username, password
+
+
 class VCenterDashboardView(View):
     """Main dashboard for viewing and syncing vCenter VMs."""
 
@@ -239,6 +256,7 @@ class VCenterDashboardView(View):
             {
                 "form": form,
                 "servers": servers,
+                "servers_with_credentials": get_servers_with_credentials(),
                 "cached_data": cached_data,
                 "selected_server": selected_server,
                 "vms": vms,
@@ -255,8 +273,7 @@ class VCenterDashboardView(View):
 
         if form.is_valid():
             server = form.cleaned_data["server"]
-            username = form.cleaned_data["username"]
-            password = form.cleaned_data["password"]
+            username, password = resolve_credentials(server, form)
             verify_ssl = form.cleaned_data.get("verify_ssl", False)
 
             # Connect and fetch VMs
@@ -293,6 +310,7 @@ class VCenterDashboardView(View):
             {
                 "form": form,
                 "servers": servers,
+                "servers_with_credentials": get_servers_with_credentials(),
                 "cached_data": cached_data,
                 "selected_server": servers[0] if servers else None,
                 "vms": [],
@@ -331,8 +349,7 @@ class VCenterSyncView(View):
             )
 
         server = form.cleaned_data["server"]
-        username = form.cleaned_data["username"]
-        password = form.cleaned_data["password"]
+        username, password = resolve_credentials(server, form)
         verify_ssl = form.cleaned_data.get("verify_ssl", False)
 
         # Connect and fetch VMs (this is the slow part with Duo MFA)

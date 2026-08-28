@@ -80,6 +80,8 @@
                 <!-- Error/status messages from htmx -->
                 <div id="sync-status"></div>
 
+                {{ servers_with_credentials|json_script:"servers-with-credentials" }}
+
                 <form hx-post="{% url 'plugins:netbox_vcenter:sync' %}"
                       hx-target="#sync-status"
                       hx-indicator="#sync-btn"
@@ -92,21 +94,27 @@
                         <small class="text-muted">{{ form.server.help_text }}</small>
                     </div>
 
-                    <div class="mb-3">
-                        <label class="form-label">{{ form.username.label }}</label>
-                        {{ form.username }}
-                        <small class="text-muted">{{ form.username.help_text }}</small>
+                    <div id="saved-credentials-notice" class="alert alert-success py-2 mb-3" style="display: none;">
+                        <i class="mdi mdi-check-circle"></i> Using saved credentials configured for this server.
                     </div>
 
-                    <div class="mb-3">
-                        <label class="form-label">{{ form.password.label }}</label>
-                        {{ form.password }}
-                    </div>
+                    <div id="credential-fields">
+                        <div class="mb-3">
+                            <label class="form-label">{{ form.username.label }}</label>
+                            {{ form.username }}
+                            <small class="text-muted">{{ form.username.help_text }}</small>
+                        </div>
 
-                    <div class="mb-3 form-check">
-                        {{ form.verify_ssl }}
-                        <label class="form-check-label">{{ form.verify_ssl.label }}</label>
-                        <br><small class="text-muted">{{ form.verify_ssl.help_text }}</small>
+                        <div class="mb-3">
+                            <label class="form-label">{{ form.password.label }}</label>
+                            {{ form.password }}
+                        </div>
+
+                        <div class="mb-3 form-check">
+                            {{ form.verify_ssl }}
+                            <label class="form-check-label">{{ form.verify_ssl.label }}</label>
+                            <br><small class="text-muted">{{ form.verify_ssl.help_text }}</small>
+                        </div>
                     </div>
 
                     <button type="submit" class="btn btn-primary" id="sync-btn">
@@ -332,6 +340,39 @@ document.addEventListener('DOMContentLoaded', function() {
     const checkboxes = document.querySelectorAll('.vm-checkbox');
     const importBtn = document.getElementById('import-selected-btn');
     const searchInput = document.getElementById('vm-search');
+
+    // Hide the username/password fields when the selected server has saved credentials configured
+    const serverSelect = document.getElementById('id_server');
+    const credentialFields = document.getElementById('credential-fields');
+    const savedCredentialsNotice = document.getElementById('saved-credentials-notice');
+    const usernameInput = document.getElementById('id_username');
+    const passwordInput = document.getElementById('id_password');
+    const serversWithCredentialsEl = document.getElementById('servers-with-credentials');
+    const serversWithCredentials = serversWithCredentialsEl ? JSON.parse(serversWithCredentialsEl.textContent) : [];
+
+    function updateCredentialFieldsVisibility() {
+        if (!serverSelect) {
+            return;
+        }
+        const hasSavedCredentials = serversWithCredentials.includes(serverSelect.value);
+        if (credentialFields) {
+            credentialFields.style.display = hasSavedCredentials ? 'none' : '';
+        }
+        if (savedCredentialsNotice) {
+            savedCredentialsNotice.style.display = hasSavedCredentials ? '' : 'none';
+        }
+        if (usernameInput) {
+            usernameInput.required = !hasSavedCredentials;
+        }
+        if (passwordInput) {
+            passwordInput.required = !hasSavedCredentials;
+        }
+    }
+
+    if (serverSelect) {
+        serverSelect.addEventListener('change', updateCredentialFieldsVisibility);
+        updateCredentialFieldsVisibility();
+    }
 
     function updateImportButton() {
         const selected = document.querySelectorAll('.vm-checkbox:checked');

@@ -7,7 +7,7 @@ Supports multiple vCenter servers with per-server caching and VM import to NetBo
 
 from netbox.plugins import PluginConfig
 
-__version__ = "0.5.1"
+__version__ = "0.6.0"
 
 
 class VcenterConfig(PluginConfig):
@@ -29,6 +29,12 @@ class VcenterConfig(PluginConfig):
     default_settings = {
         # List of vCenter servers to choose from
         "vcenter_servers": [],
+        # Optional saved credentials per server, keyed by hostname, to skip the
+        # manual login form (e.g. for a non-MFA read-only service account):
+        # "vcenter_credentials": {
+        #     "vc-01.example.com": {"username": "svc-netbox@vsphere.local", "password": "..."},
+        # }
+        "vcenter_credentials": {},
         # Connection settings
         "timeout": 60,  # Connection timeout in seconds (longer for MFA)
         "verify_ssl": False,  # SSL verification (False for self-signed certs)

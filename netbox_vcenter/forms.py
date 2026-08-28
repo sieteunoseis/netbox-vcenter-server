@@ -25,11 +25,13 @@ class VCenterConnectForm(forms.Form):
     )
     username = forms.CharField(
         label="Username",
+        required=False,
         help_text="Enter your username (e.g., domain\\user or user@domain)",
         widget=forms.TextInput(attrs={"class": "form-control", "placeholder": "domain\\username"}),
     )
     password = forms.CharField(
         label="Password",
+        required=False,
         widget=forms.PasswordInput(attrs={"class": "form-control"}),
     )
     verify_ssl = forms.BooleanField(
@@ -46,6 +48,21 @@ class VCenterConnectForm(forms.Form):
         config = settings.PLUGINS_CONFIG.get("netbox_vcenter", {})
         servers = config.get("vcenter_servers", [])
         self.fields["server"].choices = [(s, s) for s in servers]
+        self.stored_credentials = config.get("vcenter_credentials", {})
+
+    def clean(self):
+        """Require username/password only when the server has no saved credentials."""
+        cleaned_data = super().clean()
+        server = cleaned_data.get("server")
+        username = cleaned_data.get("username")
+        password = cleaned_data.get("password")
+
+        if not self.stored_credentials.get(server) and not (username and password):
+            raise forms.ValidationError(
+                "Username and password are required for this server (no saved credentials configured)."
+            )
+
+        return cleaned_data
 
 
 class VMImportForm(forms.Form):

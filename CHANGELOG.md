@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-08-28
+
+### Added
+- **Saved per-server credentials** ([#13](https://github.com/sieteunoseis/netbox-vcenter-server/issues/13)) - A new optional `vcenter_credentials` setting lets you configure a username/password per vCenter server in `PLUGINS_CONFIG` (intended for a dedicated read-only, non-MFA service account). When the selected server has saved credentials, the dashboard hides the manual username/password fields and syncs directly; servers without saved credentials still show the manual login form, so MFA-enabled accounts work exactly as before.
+
 ## [0.5.1] - 2026-08-25
 
 ### Added
