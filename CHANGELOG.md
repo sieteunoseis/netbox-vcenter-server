@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-09-03
+
+### Fixed
+- **"Sync all differences" disk validation failure** ([#14](https://github.com/sieteunoseis/netbox-vcenter-server/issues/14)) - Updating an existing VM's aggregate disk size (via import "update existing VMs" or the compare page's "Sync all differences") set `VirtualMachine.disk` and saved before syncing the VM's individual `VirtualDisk` records. NetBox validates the aggregate `disk` field against the sum of the VM's currently saved `VirtualDisk` records, so any VM whose per-disk sizes had changed in vCenter failed `full_clean()` with "The specified disk size (...) must match the aggregate size of assigned virtual disks (...)" and was silently left un-updated. Per-disk records are now synced first so the aggregate validates against up-to-date data. "Sync all differences" additionally never synced per-disk records at all (only the aggregate size) - it now does.
+
 ## [0.6.0] - 2026-08-28
 
 ### Added

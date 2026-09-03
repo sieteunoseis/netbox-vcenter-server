@@ -181,6 +181,33 @@ def get_servers_with_credentials() -> list:
     return [server for server in servers if credentials.get(server)]
 
 
+def sync_vm_disks(vm: VirtualMachine, disks: list) -> None:
+    """
+    Create or update a VM's VirtualDisk objects from vCenter disk data.
+
+    Matches disks by name (e.g. "Hard disk 1"). Disks removed in vCenter
+    are left untouched in NetBox rather than deleted.
+
+    Must be called before setting VirtualMachine.disk and full_clean()/save(),
+    since NetBox validates the VM's aggregate disk size against the sum of
+    its currently saved VirtualDisk records.
+    """
+    for disk in disks:
+        name = disk.get("name")
+        size_mb = disk.get("size_mb")
+        if not name or size_mb is None:
+            continue
+
+        disk_obj, created = VirtualDisk.objects.get_or_create(
+            virtual_machine=vm,
+            name=name,
+            defaults={"size": size_mb},
+        )
+        if not created and disk_obj.size != size_mb:
+            disk_obj.size = size_mb
+            disk_obj.save()
+
+
 def resolve_credentials(server: str, form: VCenterConnectForm) -> tuple:
     """Resolve the username/password to use, falling back to saved config credentials."""
     config = settings.PLUGINS_CONFIG.get("netbox_vcenter", {})
@@ -554,7 +581,6 @@ class VMImportView(View):
                         # Update existing VM specs
                         existing_vm.vcpus = vm_data.get("vcpus")
                         existing_vm.memory = vm_data.get("memory_mb")
-                        existing_vm.disk = vm_data.get("disk_mb")
                         existing_vm.status = "active" if vm_data.get("power_state") == "on" else "offline"
 
                         # Update role and platform if configured and not already set
@@ -574,13 +600,19 @@ class VMImportView(View):
                         if vm_data.get("interfaces") or vm_data.get("primary_ip"):
                             self._sync_vm_interfaces(existing_vm, vm_data, vrf=default_vrf, tenant=default_tenant)
 
-                        existing_vm.full_clean()
-                        existing_vm.save()
-
-                        # Sync disks if available
+                        # Sync disks before setting the aggregate disk size: NetBox
+                        # validates VirtualMachine.disk against the sum of its
+                        # currently saved VirtualDisk records, so the child disks
+                        # must be brought up to date first or full_clean() below
+                        # will reject the new aggregate as a mismatch.
                         disks = vm_data.get("disks")
                         if disks:
-                            self._sync_vm_disks(existing_vm, disks)
+                            sync_vm_disks(existing_vm, disks)
+
+                        existing_vm.disk = vm_data.get("disk_mb")
+
+                        existing_vm.full_clean()
+                        existing_vm.save()
 
                         # Add tag if configured
                         if default_tag:
@@ -630,7 +662,7 @@ class VMImportView(View):
                 # Sync disks if available
                 disks = vm_data.get("disks")
                 if disks:
-                    self._sync_vm_disks(vm, disks)
+                    sync_vm_disks(vm, disks)
 
                 created += 1
 
@@ -758,28 +790,6 @@ class VMImportView(View):
                 if vm.primary_ip4 != primary_ip_obj:
                     vm.primary_ip4 = primary_ip_obj
                     vm.save()
-
-    def _sync_vm_disks(self, vm, disks):
-        """
-        Create or update the VM's VirtualDisk objects from vCenter disk data.
-
-        Matches disks by name (e.g. "Hard disk 1"). Disks removed in vCenter
-        are left untouched in NetBox rather than deleted.
-        """
-        for disk in disks:
-            name = disk.get("name")
-            size_mb = disk.get("size_mb")
-            if not name or size_mb is None:
-                continue
-
-            disk_obj, created = VirtualDisk.objects.get_or_create(
-                virtual_machine=vm,
-                name=name,
-                defaults={"size": size_mb},
-            )
-            if not created and disk_obj.size != size_mb:
-                disk_obj.size = size_mb
-                disk_obj.save()
 
 
 class VMComparisonView(View):
@@ -964,8 +974,18 @@ class SyncDifferencesView(View):
                 # Update NetBox VM with vCenter specs
                 nb_vm.vcpus = vc_vm.get("vcpus")
                 nb_vm.memory = vc_vm.get("memory_mb")
-                nb_vm.disk = vc_vm.get("disk_mb")
                 nb_vm.status = "active" if vc_vm.get("power_state") == "on" else "offline"
+
+                # Sync disks before setting the aggregate disk size: NetBox
+                # validates VirtualMachine.disk against the sum of its
+                # currently saved VirtualDisk records, so the child disks
+                # must be brought up to date first or full_clean() below
+                # will reject the new aggregate as a mismatch.
+                disks = vc_vm.get("disks")
+                if disks:
+                    sync_vm_disks(nb_vm, disks)
+
+                nb_vm.disk = vc_vm.get("disk_mb")
 
                 nb_vm.full_clean()
                 nb_vm.save()
