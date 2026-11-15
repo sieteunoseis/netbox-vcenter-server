@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-14
+
+### Added
+- **Primary IP in comparison** ([#15](https://github.com/sieteunoseis/netbox-vcenter-server/issues/15)) - "Compare with NetBox" now flags VMs whose vCenter primary IP differs from the NetBox VM's primary IP. "Sync All Differences" re-syncs those VMs' interfaces/IPs and repoints the primary IP (the old IP record is left in IPAM).
+- **vCenter Notes import** ([#18](https://github.com/sieteunoseis/netbox-vcenter-server/issues/18)) - VM Notes (`config.annotation`) are fetched and used as the comments of newly imported VMs. New `sync_vm_notes` setting (default `False`) also pushes differing Notes to existing VMs on "update existing" import and "Sync All Differences", and shows them on the compare page.
+- **Guest OS custom field** ([#16](https://github.com/sieteunoseis/netbox-vcenter-server/issues/16)) - New `guest_os_custom_field` setting names an existing Virtual Machine custom field to fill with the vCenter guest OS on import and sync.
+
+### Fixed
+- **Duplicate names in one import batch** ([#17](https://github.com/sieteunoseis/netbox-vcenter-server/issues/17)) - When two selected vCenter VMs normalize to the same NetBox name (e.g. `server01b` and `SERVER01b.example.com`), the second one failed with "Virtual machine name must be unique per cluster and tenant". It is now skipped and reported as a duplicate of the first.
+
+### Changed
+- `min_version` raised to NetBox 4.7.4 (the version this release was tested on).
+- Compare page "Spec Differences" renamed to "Differences".
+
 ## [0.6.1] - 2026-09-03
 
 ### Fixed

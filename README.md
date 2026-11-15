@@ -21,7 +21,7 @@ A NetBox plugin for viewing and importing VMs from VMware vCenter servers.
 
 ## Requirements
 
-- NetBox 4.0 or higher
+- NetBox 4.7.4 or higher (tested on 4.7.4)
 - Python 3.10+
 - VMware vSphere 7.0+ (tested with vSphere 8.0.3)
 
@@ -96,6 +96,12 @@ PLUGINS_CONFIG = {
         'default_platform': '', # Platform slug (e.g., "vmware")
         'default_vrf': '',      # VRF name to scope IP dedup/creation (e.g., "management")
         'default_tenant': '',   # Tenant slug applied to IP addresses created during import
+        # Sync vCenter VM Notes into comments of *existing* VMs (overwrites when they differ).
+        # New imports always use the VM's Notes as comments when present.
+        'sync_vm_notes': False,
+        # Name of a Virtual Machine custom field (Text) to fill with the vCenter guest OS,
+        # e.g. "Microsoft Windows Server 2022 (64-bit)". Create the custom field first.
+        'guest_os_custom_field': '',
     }
 }
 ```
@@ -112,6 +118,15 @@ use VRFs, so lookups and new records stay scoped to the correct one; set
 `default_tenant` to tag newly created IP addresses with a tenant.
 Per-interface MTU is not synced yet (vSphere reports this at the
 vSwitch/portgroup level, not directly on the adapter).
+
+A VM's vCenter **Notes** become the NetBox comments of newly imported VMs.
+Set `sync_vm_notes` to also push Notes changes to existing VMs (via "update
+existing VMs" on import, or "Sync All Differences").
+
+For the operating system, either map the vCenter guest OS to a NetBox
+`Platform` with `platform_mappings`, or create a Text custom field on Virtual
+Machine and set `guest_os_custom_field` to its name to store the guest OS
+string as-is.
 
 Each of a VM's hard disks is also synced as a NetBox `VirtualDisk` (name and
 size). Disks and interfaces removed from a VM in vCenter are left in place
@@ -143,7 +158,11 @@ in NetBox rather than deleted.
 3. View:
    - **Only in vCenter** - VMs that can be imported
    - **Only in NetBox** - VMs not found in vCenter (orphaned?)
-   - **Spec Differences** - VMs with mismatched vCPUs, memory, or disk
+   - **Differences** - VMs with mismatched vCPUs, memory, disk, or primary IP
+     (and Notes, when `sync_vm_notes` is enabled)
+4. **Sync All Differences** updates those VMs in NetBox; a changed primary IP
+   also re-syncs the VM's interfaces/IPs and repoints its primary IP (the old
+   IP record is left in IPAM)
 
 ## Screenshots
 

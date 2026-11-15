@@ -7,7 +7,7 @@ Supports multiple vCenter servers with per-server caching and VM import to NetBo
 
 from netbox.plugins import PluginConfig
 
-__version__ = "0.6.1"
+__version__ = "0.7.0"
 
 
 class VcenterConfig(PluginConfig):
@@ -20,7 +20,7 @@ class VcenterConfig(PluginConfig):
     author = "Jeremy Worden"
     author_email = "jeremy.worden@gmail.com"
     base_url = "vcenter"
-    min_version = "4.0.0"
+    min_version = "4.7.4"
 
     # Required settings - plugin won't load without these
     required_settings = []
@@ -80,6 +80,16 @@ class VcenterConfig(PluginConfig):
         #     {"pattern": r"VMware Photon", "platform": "photon"},
         # ]
         "platform_mappings": [],
+        # Sync vCenter VM Notes into NetBox comments on existing VMs ("update existing"
+        # import and "Sync All Differences"), overwriting comments when they differ.
+        # Off by default so existing comments are never replaced. Notes are always
+        # used as the comments of newly imported VMs.
+        "sync_vm_notes": False,
+        # Optional name of a VirtualMachine custom field to populate with the vCenter
+        # guest OS (e.g. "Microsoft Windows Server 2022 (64-bit)") on import and sync.
+        # The custom field must already exist in NetBox (type Text, object type
+        # Virtual Machine). Leave empty to disable.
+        "guest_os_custom_field": "",
     }
 
 

@@ -12,7 +12,7 @@ from django.core.cache import cache
 from django.shortcuts import redirect, render
 from django.utils import timezone
 from django.views.generic import View
-from extras.models import Tag
+from extras.models import CustomField, Tag
 from ipam.models import VRF, IPAddress, Prefix
 from tenancy.models import Tenant
 from virtualization.models import Cluster, VirtualDisk, VirtualMachine, VMInterface
@@ -73,6 +73,94 @@ def get_import_config() -> dict:
         "default_vrf": config.get("default_vrf", ""),
         "default_tenant": config.get("default_tenant", ""),
         "platform_mappings": config.get("platform_mappings", []),
+        "guest_os_custom_field": config.get("guest_os_custom_field", ""),
+        "sync_vm_notes": config.get("sync_vm_notes", False),
+    }
+
+
+def get_default_vrf_and_tenant(import_config: dict) -> tuple:
+    """Look up the configured default VRF and tenant (None if unset or missing)."""
+    default_vrf = None
+    default_tenant = None
+
+    vrf_name = import_config.get("default_vrf")
+    if vrf_name:
+        try:
+            default_vrf = VRF.objects.get(name=vrf_name)
+        except VRF.DoesNotExist:
+            logger.warning(f"Default VRF '{vrf_name}' not found in NetBox")
+        except VRF.MultipleObjectsReturned:
+            logger.warning(f"Multiple VRFs named '{vrf_name}' found in NetBox; skipping VRF scoping")
+
+    tenant_slug = import_config.get("default_tenant")
+    if tenant_slug:
+        try:
+            default_tenant = Tenant.objects.get(slug=tenant_slug)
+        except Tenant.DoesNotExist:
+            logger.warning(f"Default tenant '{tenant_slug}' not found in NetBox")
+
+    return default_vrf, default_tenant
+
+
+def get_guest_os_custom_field(import_config: dict) -> str | None:
+    """
+    Return the configured guest OS custom field name if it exists on VirtualMachine.
+
+    Returns None (and logs a warning) when the setting points to a custom field
+    that doesn't exist, since writing an unknown key would fail full_clean().
+    """
+    cf_name = import_config.get("guest_os_custom_field")
+    if not cf_name:
+        return None
+    vm_ct = ContentType.objects.get_for_model(VirtualMachine)
+    if not CustomField.objects.filter(name=cf_name, object_types=vm_ct).exists():
+        logger.warning(f"guest_os_custom_field '{cf_name}' is not a Virtual Machine custom field in NetBox")
+        return None
+    return cf_name
+
+
+def apply_guest_os(vm: VirtualMachine, guest_os: str, cf_name: str | None) -> None:
+    """Write the vCenter guest OS into the configured custom field, if enabled."""
+    if cf_name and guest_os:
+        vm.custom_field_data[cf_name] = guest_os
+
+
+def netbox_primary_ip_hosts(vm: VirtualMachine) -> set:
+    """Host addresses (no mask) of a NetBox VM's primary IPv4/IPv6."""
+    hosts = set()
+    for ip in (vm.primary_ip4, vm.primary_ip6):
+        if ip:
+            hosts.add(str(ip.address.ip))
+    return hosts
+
+
+def primary_ip_differs(vc_vm: dict, nb_vm: VirtualMachine) -> bool:
+    """True if vCenter reports a primary IP that isn't the NetBox VM's primary IP."""
+    vc_ip = vc_vm.get("primary_ip")
+    if not vc_ip or vc_ip.startswith("fe80:"):
+        return False
+    return vc_ip not in netbox_primary_ip_hosts(nb_vm)
+
+
+def notes_differ(vc_vm: dict, nb_vm: VirtualMachine) -> bool:
+    """True if the vCenter VM has Notes that don't match the NetBox VM's comments."""
+    notes = (vc_vm.get("notes") or "").strip()
+    return bool(notes) and notes != (nb_vm.comments or "").strip()
+
+
+def get_vm_differences(vc_vm: dict, nb_vm: VirtualMachine, sync_notes: bool = False) -> dict:
+    """
+    Per-field differences between a vCenter VM and its matching NetBox VM.
+
+    Notes are only compared when sync_notes is enabled, so existing NetBox
+    comments aren't flagged (or overwritten) unless the user opted in.
+    """
+    return {
+        "vcpus": vc_vm.get("vcpus") != nb_vm.vcpus,
+        "memory": vc_vm.get("memory_mb") != nb_vm.memory,
+        "disk": vc_vm.get("disk_mb") != nb_vm.disk,
+        "primary_ip": primary_ip_differs(vc_vm, nb_vm),
+        "notes": sync_notes and notes_differ(vc_vm, nb_vm),
     }
 
 
@@ -508,16 +596,12 @@ class VMImportView(View):
         default_tag_slug = import_config["default_tag"]
         default_role_slug = import_config["default_role"]
         default_platform_slug = import_config["default_platform"]
-        default_vrf_name = import_config["default_vrf"]
-        default_tenant_slug = import_config["default_tenant"]
         platform_mappings = import_config["platform_mappings"]
 
         # Look up default tag, role, platform, VRF, tenant if configured
         default_tag = None
         default_role = None
         default_platform = None
-        default_vrf = None
-        default_tenant = None
 
         if default_tag_slug:
             try:
@@ -539,19 +623,8 @@ class VMImportView(View):
             except Platform.DoesNotExist:
                 logger.warning(f"Default platform '{default_platform_slug}' not found in NetBox")
 
-        if default_vrf_name:
-            try:
-                default_vrf = VRF.objects.get(name=default_vrf_name)
-            except VRF.DoesNotExist:
-                logger.warning(f"Default VRF '{default_vrf_name}' not found in NetBox")
-            except VRF.MultipleObjectsReturned:
-                logger.warning(f"Multiple VRFs named '{default_vrf_name}' found in NetBox; skipping VRF scoping")
-
-        if default_tenant_slug:
-            try:
-                default_tenant = Tenant.objects.get(slug=default_tenant_slug)
-            except Tenant.DoesNotExist:
-                logger.warning(f"Default tenant '{default_tenant_slug}' not found in NetBox")
+        default_vrf, default_tenant = get_default_vrf_and_tenant(import_config)
+        guest_os_cf = get_guest_os_custom_field(import_config)
 
         # Build map of normalized names to existing NetBox VMs
         existing_vm_map = {}
@@ -563,11 +636,23 @@ class VMImportView(View):
         created = 0
         updated = 0
         skipped = 0
+        duplicates = []
         errors = []
+
+        # Normalized name -> vCenter name of VMs already handled in this batch, so
+        # two vCenter VMs that normalize to the same NetBox name (e.g. "server01b"
+        # and "SERVER01b.example.com") don't collide on create (#17).
+        seen_in_batch = {}
 
         for vm_data in vms_to_import:
             vm_name = vm_data.get("name")
             vm_normalized = normalize_name(vm_name, match_mode, match_pattern)
+
+            if vm_normalized in seen_in_batch:
+                skipped += 1
+                duplicates.append(f"{vm_name}: duplicate of {seen_in_batch[vm_normalized]} in this batch")
+                continue
+            seen_in_batch[vm_normalized] = vm_name
 
             # Determine name to use for import
             import_name = get_name_for_import(vm_name, normalize_names, match_mode, match_pattern)
@@ -611,6 +696,12 @@ class VMImportView(View):
 
                         existing_vm.disk = vm_data.get("disk_mb")
 
+                        # vCenter Notes -> NetBox comments (only when vCenter has notes that differ)
+                        if import_config["sync_vm_notes"] and notes_differ(vm_data, existing_vm):
+                            existing_vm.comments = vm_data["notes"].strip()
+
+                        apply_guest_os(existing_vm, vm_data.get("guest_os"), guest_os_cf)
+
                         existing_vm.full_clean()
                         existing_vm.save()
 
@@ -646,10 +737,14 @@ class VMImportView(View):
                     status=status,
                     role=default_role,
                     platform=vm_platform,
-                    comments=f"Imported from vCenter {server} on {timezone.now().strftime('%Y-%m-%d %H:%M')}",
+                    # Use the vCenter VM's Notes as comments when present (#18)
+                    comments=(vm_data.get("notes") or "").strip()
+                    or f"Imported from vCenter {server} on {timezone.now().strftime('%Y-%m-%d %H:%M')}",
                 )
+                apply_guest_os(vm, vm_data.get("guest_os"), guest_os_cf)
                 vm.full_clean()
                 vm.save()
+                existing_vm_map[vm_normalized] = vm
 
                 # Add tag if configured
                 if default_tag:
@@ -676,7 +771,14 @@ class VMImportView(View):
         if updated:
             messages.success(request, f"Updated {updated} existing VM(s)")
         if skipped:
-            messages.info(request, f"Skipped {skipped} VM(s) (already exist, update not selected)")
+            already = skipped - len(duplicates)
+            if already:
+                messages.info(request, f"Skipped {already} VM(s) (already exist, update not selected)")
+            if duplicates:
+                messages.info(
+                    request,
+                    f"Skipped {len(duplicates)} VM(s) with duplicate names: {'; '.join(duplicates[:3])}",
+                )
         if errors:
             messages.warning(request, f"Failed: {len(errors)} VM(s): {'; '.join(errors[:3])}")
 
@@ -803,6 +905,7 @@ class VMComparisonView(View):
 
         # Get name matching config
         match_mode, match_pattern = get_name_match_config()
+        sync_notes = get_import_config()["sync_vm_notes"]
 
         # Get vCenter VMs from cache
         cached_data = get_cached_data(server) if server else None
@@ -816,7 +919,7 @@ class VMComparisonView(View):
             vcenter_normalized_map[normalized] = vm
 
         # Get NetBox VMs
-        netbox_vms = VirtualMachine.objects.all()
+        netbox_vms = VirtualMachine.objects.select_related("cluster", "primary_ip4", "primary_ip6")
         netbox_normalized_map = {}  # normalized -> vm_object
         for vm in netbox_vms:
             normalized = normalize_name(vm.name, match_mode, match_pattern)
@@ -851,17 +954,12 @@ class VMComparisonView(View):
                     "memory_mb": nb_vm.memory if nb_vm else None,
                     "disk_mb": nb_vm.disk if nb_vm else None,
                     "status": nb_vm.status if nb_vm else None,
+                    "primary_ip": ", ".join(sorted(netbox_primary_ip_hosts(nb_vm))) if nb_vm else None,
+                    "comments": nb_vm.comments if nb_vm else None,
                 },
-                "has_differences": False,
+                "diffs": get_vm_differences(vc_vm, nb_vm, sync_notes) if nb_vm else {},
             }
-
-            # Check for differences
-            if vc_vm.get("vcpus") != diff["netbox"]["vcpus"]:
-                diff["has_differences"] = True
-            if vc_vm.get("memory_mb") != diff["netbox"]["memory_mb"]:
-                diff["has_differences"] = True
-            if vc_vm.get("disk_mb") != diff["netbox"]["disk_mb"]:
-                diff["has_differences"] = True
+            diff["has_differences"] = any(diff["diffs"].values())
 
             comparison["in_both"].append(diff)
 
@@ -927,6 +1025,8 @@ class SyncDifferencesView(View):
         # Get import config for tag/role/platform
         import_config = get_import_config()
         default_tag_slug = import_config["default_tag"]
+        default_vrf, default_tenant = get_default_vrf_and_tenant(import_config)
+        guest_os_cf = get_guest_os_custom_field(import_config)
 
         default_tag = None
         if default_tag_slug:
@@ -943,7 +1043,7 @@ class SyncDifferencesView(View):
             vcenter_normalized_map[normalized] = vm
 
         netbox_normalized_map = {}
-        for vm in VirtualMachine.objects.all():
+        for vm in VirtualMachine.objects.select_related("primary_ip4", "primary_ip6"):
             normalized = normalize_name(vm.name, match_mode, match_pattern)
             netbox_normalized_map[normalized] = vm
 
@@ -960,14 +1060,8 @@ class SyncDifferencesView(View):
             if not vc_vm or not nb_vm:
                 continue
 
-            # Check if there are differences
-            has_diff = (
-                vc_vm.get("vcpus") != nb_vm.vcpus
-                or vc_vm.get("memory_mb") != nb_vm.memory
-                or vc_vm.get("disk_mb") != nb_vm.disk
-            )
-
-            if not has_diff:
+            diffs = get_vm_differences(vc_vm, nb_vm, import_config["sync_vm_notes"])
+            if not any(diffs.values()):
                 continue
 
             try:
@@ -987,8 +1081,17 @@ class SyncDifferencesView(View):
 
                 nb_vm.disk = vc_vm.get("disk_mb")
 
+                if diffs["notes"]:
+                    nb_vm.comments = vc_vm["notes"].strip()
+
+                apply_guest_os(nb_vm, vc_vm.get("guest_os"), guest_os_cf)
+
                 nb_vm.full_clean()
                 nb_vm.save()
+
+                # Changed primary IP: sync interfaces/IPs and repoint primary IP (#15)
+                if diffs["primary_ip"]:
+                    VMImportView()._sync_vm_interfaces(nb_vm, vc_vm, vrf=default_vrf, tenant=default_tenant)
 
                 # Add tag if configured
                 if default_tag:

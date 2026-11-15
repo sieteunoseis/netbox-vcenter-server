@@ -110,6 +110,7 @@ class VCenterClient:
             "config.hardware.device",
             "config.guestFullName",
             "config.uuid",
+            "config.annotation",
             "guest.ipAddress",
             "guest.net",
         ]
@@ -299,6 +300,7 @@ class VCenterClient:
             "datacenter": None,
             "guest_os": None,
             "uuid": None,
+            "notes": "",
             "ip_addresses": [],
             "primary_ip": None,
             "interfaces": [],
@@ -319,6 +321,7 @@ class VCenterClient:
         vm_data["memory_mb"] = props.get("config.hardware.memoryMB")
         vm_data["guest_os"] = props.get("config.guestFullName")
         vm_data["uuid"] = props.get("config.uuid")
+        vm_data["notes"] = (props.get("config.annotation") or "").strip()
 
         # Calculate disk capacity from devices
         devices = props.get("config.hardware.device", [])
