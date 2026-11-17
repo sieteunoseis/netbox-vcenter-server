@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-11-17
+
+### Added
+- `top_level_menu` setting (default `True`); set `False` to list this plugin's menu items under the shared "Plugins" menu instead of its own top-level sidebar menu
+
+### Changed
+- Plugin display name shortened to "vCenter" (was "NetBox vCenter") so it matches the sidebar menu label
+
 ## [0.7.0] - 2026-11-14
 
 ### Added

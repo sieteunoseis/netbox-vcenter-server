@@ -106,6 +106,14 @@ PLUGINS_CONFIG = {
 }
 ```
 
+### Display Options
+
+Optional `PLUGINS_CONFIG["netbox_vcenter"]` keys that control where the plugin appears in the UI:
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `top_level_menu` | `True` | `True` = own top-level sidebar menu. `False` = items listed under the shared **Plugins** menu, to shorten the sidebar. |
+
 All of a VM's network adapters are synced, not just the primary one: each
 becomes a NetBox `VMInterface` named to match vSphere's own adapter number
 (vSphere's "Network Adapter 1" becomes NetBox interface `eth1`), with its
