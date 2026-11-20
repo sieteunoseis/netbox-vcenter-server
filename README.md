@@ -102,6 +102,10 @@ PLUGINS_CONFIG = {
         # Name of a Virtual Machine custom field (Text) to fill with the vCenter guest OS,
         # e.g. "Microsoft Windows Server 2022 (64-bit)". Create the custom field first.
         'guest_os_custom_field': '',
+        # Sync each VM's cluster from vCenter (see "Cluster sync" below).
+        'sync_cluster': False,
+        'auto_create_clusters': False,
+        'auto_create_cluster_type': '',  # Cluster type slug for auto-created clusters
     }
 }
 ```
@@ -136,6 +140,18 @@ For the operating system, either map the vCenter guest OS to a NetBox
 Machine and set `guest_os_custom_field` to its name to store the guest OS
 string as-is.
 
+**Cluster sync.** With `sync_cluster` enabled, "update existing VMs" and
+"Sync All Differences" move a VM to the NetBox cluster vCenter places it in,
+and new imports go there too (the cluster picked in the import form is the
+fallback). The cluster name is taken as-is from vCenter: the VM's vSphere
+cluster, or its ESXi host's name when the host isn't in a cluster. If no NetBox
+cluster has that exact name, the VM is left where it is, unless
+`auto_create_clusters` is enabled; the cluster is then created with the
+cluster type whose slug is `auto_create_cluster_type`, scoped to the NetBox
+site whose name or slug matches the vCenter datacenter (left unscoped if none
+matches). Re-sync from vCenter after upgrading so cached data includes each
+VM's host.
+
 Each of a VM's hard disks is also synced as a NetBox `VirtualDisk` (name and
 size). Disks and interfaces removed from a VM in vCenter are left in place
 in NetBox rather than deleted.
@@ -167,7 +183,7 @@ in NetBox rather than deleted.
    - **Only in vCenter** - VMs that can be imported
    - **Only in NetBox** - VMs not found in vCenter (orphaned?)
    - **Differences** - VMs with mismatched vCPUs, memory, disk, or primary IP
-     (and Notes, when `sync_vm_notes` is enabled)
+     (and Notes, when `sync_vm_notes` is enabled; cluster, when `sync_cluster` is enabled)
 4. **Sync All Differences** updates those VMs in NetBox; a changed primary IP
    also re-syncs the VM's interfaces/IPs and repoints its primary IP (the old
    IP record is left in IPAM)

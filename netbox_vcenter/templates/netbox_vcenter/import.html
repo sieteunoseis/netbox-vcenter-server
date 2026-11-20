@@ -81,7 +81,7 @@
                         </label>
                         {{ form.cluster }}
                         <small class="text-muted">
-                            Select the NetBox cluster to assign these VMs to.
+                            Select the NetBox cluster to assign these VMs to{% if sync_cluster %} when vCenter's cluster/host has no NetBox cluster{% endif %}.
                         </small>
                     </div>
 
@@ -126,7 +126,7 @@
                         </label>
                         {{ form.cluster }}
                         <small class="text-muted">
-                            Select the NetBox cluster (used for any new VMs).
+                            Select the NetBox cluster (used for any new VMs{% if sync_cluster %} that vCenter doesn't place in a NetBox cluster{% endif %}).
                         </small>
                     </div>
 

@@ -4,7 +4,7 @@ import json
 import logging
 import re
 
-from dcim.models import MACAddress, Platform
+from dcim.models import MACAddress, Platform, Site
 from django.conf import settings
 from django.contrib import messages
 from django.contrib.contenttypes.models import ContentType
@@ -16,7 +16,7 @@ from extras.models import CustomField, Tag
 from ipam.models import VRF, IPAddress, Prefix
 from netaddr import IPNetwork
 from tenancy.models import Tenant
-from virtualization.models import Cluster, VirtualDisk, VirtualMachine, VMInterface
+from virtualization.models import Cluster, ClusterType, VirtualDisk, VirtualMachine, VMInterface
 
 from .client import connect_and_fetch
 from .forms import VCenterConnectForm, VMImportForm
@@ -76,6 +76,9 @@ def get_import_config() -> dict:
         "platform_mappings": config.get("platform_mappings", []),
         "guest_os_custom_field": config.get("guest_os_custom_field", ""),
         "sync_vm_notes": config.get("sync_vm_notes", False),
+        "sync_cluster": config.get("sync_cluster", False),
+        "auto_create_clusters": config.get("auto_create_clusters", False),
+        "auto_create_cluster_type": config.get("auto_create_cluster_type", ""),
     }
 
 
@@ -149,12 +152,33 @@ def notes_differ(vc_vm: dict, nb_vm: VirtualMachine) -> bool:
     return bool(notes) and notes != (nb_vm.comments or "").strip()
 
 
-def get_vm_differences(vc_vm: dict, nb_vm: VirtualMachine, sync_notes: bool = False) -> dict:
+def vcenter_cluster_name(vc_vm: dict) -> str | None:
+    """
+    The NetBox cluster name a vCenter VM belongs in, taken as-is from vCenter:
+    its vSphere cluster, or its ESXi host's name when that host isn't in a
+    cluster (a standalone host is its own single-host compute resource).
+    """
+    return vc_vm.get("cluster") or vc_vm.get("host") or None
+
+
+def cluster_differs(vc_vm: dict, nb_vm: VirtualMachine) -> bool:
+    """True if vCenter places the VM in a different cluster than NetBox does."""
+    target = vcenter_cluster_name(vc_vm)
+    if not target:
+        return False
+    current = nb_vm.cluster.name if nb_vm.cluster_id else None
+    return target != current
+
+
+def get_vm_differences(
+    vc_vm: dict, nb_vm: VirtualMachine, sync_notes: bool = False, sync_cluster: bool = False
+) -> dict:
     """
     Per-field differences between a vCenter VM and its matching NetBox VM.
 
     Notes are only compared when sync_notes is enabled, so existing NetBox
-    comments aren't flagged (or overwritten) unless the user opted in.
+    comments aren't flagged (or overwritten) unless the user opted in. The
+    cluster is likewise only compared when sync_cluster is enabled.
     """
     return {
         "vcpus": vc_vm.get("vcpus") != nb_vm.vcpus,
@@ -162,7 +186,84 @@ def get_vm_differences(vc_vm: dict, nb_vm: VirtualMachine, sync_notes: bool = Fa
         "disk": vc_vm.get("disk_mb") != nb_vm.disk,
         "primary_ip": primary_ip_differs(vc_vm, nb_vm),
         "notes": sync_notes and notes_differ(vc_vm, nb_vm),
+        "cluster": sync_cluster and cluster_differs(vc_vm, nb_vm),
     }
+
+
+class ClusterResolver:
+    """
+    Look up the NetBox cluster named by vCenter for a VM (see vcenter_cluster_name),
+    creating it when auto_create_clusters is enabled. Results are cached per batch.
+
+    A created cluster gets the ClusterType whose slug is auto_create_cluster_type,
+    and is scoped to the NetBox site whose name or slug matches the VM's vCenter
+    datacenter (case-insensitive); with no matching site it is left unscoped.
+    """
+
+    def __init__(self, import_config: dict):
+        self.auto_create = import_config["auto_create_clusters"]
+        self.cluster_type_slug = import_config["auto_create_cluster_type"]
+        self._cache = {}
+        self._cluster_type = None
+        self._cluster_type_loaded = False
+        self.created = []
+        self.unmatched = set()
+
+    def _get_cluster_type(self):
+        if not self._cluster_type_loaded:
+            self._cluster_type_loaded = True
+            if not self.cluster_type_slug:
+                logger.warning("auto_create_clusters is enabled but auto_create_cluster_type is not set")
+            else:
+                self._cluster_type = ClusterType.objects.filter(slug=self.cluster_type_slug).first()
+                if self._cluster_type is None:
+                    logger.warning(f"Cluster type '{self.cluster_type_slug}' not found in NetBox")
+        return self._cluster_type
+
+    @staticmethod
+    def _site_for_datacenter(datacenter: str | None):
+        if not datacenter:
+            return None
+        return (
+            Site.objects.filter(name__iexact=datacenter).first() or Site.objects.filter(slug__iexact=datacenter).first()
+        )
+
+    def resolve(self, vc_vm: dict) -> Cluster | None:
+        name = vcenter_cluster_name(vc_vm)
+        if not name:
+            return None
+        if name in self._cache:
+            return self._cache[name]
+
+        cluster = Cluster.objects.filter(name=name).first()
+        if cluster is None and self.auto_create:
+            cluster_type = self._get_cluster_type()
+            if cluster_type is not None:
+                cluster = Cluster(name=name, type=cluster_type)
+                site = self._site_for_datacenter(vc_vm.get("datacenter"))
+                if site is not None:
+                    cluster.scope = site
+                cluster.full_clean()
+                cluster.save()
+                self.created.append(name)
+                logger.info(f"Created cluster '{name}' from vCenter")
+        if cluster is None:
+            self.unmatched.add(name)
+
+        self._cache[name] = cluster
+        return cluster
+
+    def report(self, request) -> None:
+        """Add messages for clusters created and vCenter clusters with no NetBox match."""
+        if self.created:
+            messages.info(request, f"Created {len(self.created)} cluster(s): {', '.join(sorted(self.created))}")
+        if self.unmatched:
+            names = sorted(self.unmatched)
+            messages.warning(
+                request,
+                f"No NetBox cluster for {len(names)} vCenter cluster/host name(s), cluster left unchanged: "
+                f"{', '.join(names[:5])}",
+            )
 
 
 def get_platform_for_guest_os(guest_os: str, mappings: list) -> Platform | None:
@@ -562,6 +663,7 @@ class VMImportView(View):
                 "server": server,
                 "new_count": len([v for v in vms_to_import if not v.get("exists_in_netbox")]),
                 "existing_count": len([v for v in vms_to_import if v.get("exists_in_netbox")]),
+                "sync_cluster": get_import_config()["sync_cluster"],
             },
         )
 
@@ -626,6 +728,8 @@ class VMImportView(View):
 
         default_vrf, default_tenant = get_default_vrf_and_tenant(import_config)
         guest_os_cf = get_guest_os_custom_field(import_config)
+        sync_cluster = import_config["sync_cluster"]
+        cluster_resolver = ClusterResolver(import_config)
 
         # Build map of normalized names to existing NetBox VMs
         existing_vm_map = {}
@@ -668,6 +772,12 @@ class VMImportView(View):
                         existing_vm.vcpus = vm_data.get("vcpus")
                         existing_vm.memory = vm_data.get("memory_mb")
                         existing_vm.status = "active" if vm_data.get("power_state") == "on" else "offline"
+
+                        # Move to the cluster vCenter reports (its vSphere cluster or standalone host)
+                        if sync_cluster:
+                            target_cluster = cluster_resolver.resolve(vm_data)
+                            if target_cluster and existing_vm.cluster_id != target_cluster.pk:
+                                existing_vm.cluster = target_cluster
 
                         # Update role and platform if configured and not already set
                         if default_role and not existing_vm.role:
@@ -728,10 +838,14 @@ class VMImportView(View):
                     guest_os = vm_data.get("guest_os")
                     vm_platform = get_platform_for_guest_os(guest_os, platform_mappings)
 
+                # With sync_cluster, place new VMs in the cluster vCenter reports,
+                # falling back to the cluster selected in the form.
+                vm_cluster = (cluster_resolver.resolve(vm_data) if sync_cluster else None) or cluster
+
                 # Create the VM with normalized or original name
                 vm = VirtualMachine(
                     name=import_name,
-                    cluster=cluster,
+                    cluster=vm_cluster,
                     vcpus=vm_data.get("vcpus"),
                     memory=vm_data.get("memory_mb"),
                     disk=vm_data.get("disk_mb"),
@@ -768,7 +882,10 @@ class VMImportView(View):
 
         # Build result message
         if created:
-            messages.success(request, f"Created {created} VM(s) in cluster '{cluster.name}'")
+            if sync_cluster:
+                messages.success(request, f"Created {created} VM(s)")
+            else:
+                messages.success(request, f"Created {created} VM(s) in cluster '{cluster.name}'")
         if updated:
             messages.success(request, f"Updated {updated} existing VM(s)")
         if skipped:
@@ -782,6 +899,7 @@ class VMImportView(View):
                 )
         if errors:
             messages.warning(request, f"Failed: {len(errors)} VM(s): {'; '.join(errors[:3])}")
+        cluster_resolver.report(request)
 
         return redirect("plugins:netbox_vcenter:dashboard")
 
@@ -908,7 +1026,9 @@ class VMComparisonView(View):
 
         # Get name matching config
         match_mode, match_pattern = get_name_match_config()
-        sync_notes = get_import_config()["sync_vm_notes"]
+        compare_config = get_import_config()
+        sync_notes = compare_config["sync_vm_notes"]
+        sync_cluster = compare_config["sync_cluster"]
 
         # Get vCenter VMs from cache
         cached_data = get_cached_data(server) if server else None
@@ -959,8 +1079,10 @@ class VMComparisonView(View):
                     "status": nb_vm.status if nb_vm else None,
                     "primary_ip": ", ".join(sorted(netbox_primary_ip_hosts(nb_vm))) if nb_vm else None,
                     "comments": nb_vm.comments if nb_vm else None,
+                    "cluster": nb_vm.cluster.name if nb_vm and nb_vm.cluster_id else None,
                 },
-                "diffs": get_vm_differences(vc_vm, nb_vm, sync_notes) if nb_vm else {},
+                "vcenter_cluster": vcenter_cluster_name(vc_vm),
+                "diffs": get_vm_differences(vc_vm, nb_vm, sync_notes, sync_cluster) if nb_vm else {},
             }
             diff["has_differences"] = any(diff["diffs"].values())
 
@@ -1030,6 +1152,8 @@ class SyncDifferencesView(View):
         default_tag_slug = import_config["default_tag"]
         default_vrf, default_tenant = get_default_vrf_and_tenant(import_config)
         guest_os_cf = get_guest_os_custom_field(import_config)
+        sync_cluster = import_config["sync_cluster"]
+        cluster_resolver = ClusterResolver(import_config)
 
         default_tag = None
         if default_tag_slug:
@@ -1046,7 +1170,7 @@ class SyncDifferencesView(View):
             vcenter_normalized_map[normalized] = vm
 
         netbox_normalized_map = {}
-        for vm in VirtualMachine.objects.select_related("primary_ip4", "primary_ip6"):
+        for vm in VirtualMachine.objects.select_related("cluster", "primary_ip4", "primary_ip6"):
             normalized = normalize_name(vm.name, match_mode, match_pattern)
             netbox_normalized_map[normalized] = vm
 
@@ -1063,7 +1187,7 @@ class SyncDifferencesView(View):
             if not vc_vm or not nb_vm:
                 continue
 
-            diffs = get_vm_differences(vc_vm, nb_vm, import_config["sync_vm_notes"])
+            diffs = get_vm_differences(vc_vm, nb_vm, import_config["sync_vm_notes"], sync_cluster)
             if not any(diffs.values()):
                 continue
 
@@ -1072,6 +1196,11 @@ class SyncDifferencesView(View):
                 nb_vm.vcpus = vc_vm.get("vcpus")
                 nb_vm.memory = vc_vm.get("memory_mb")
                 nb_vm.status = "active" if vc_vm.get("power_state") == "on" else "offline"
+
+                if diffs["cluster"]:
+                    target_cluster = cluster_resolver.resolve(vc_vm)
+                    if target_cluster:
+                        nb_vm.cluster = target_cluster
 
                 # Sync disks before setting the aggregate disk size: NetBox
                 # validates VirtualMachine.disk against the sum of its
@@ -1111,5 +1240,6 @@ class SyncDifferencesView(View):
             messages.warning(request, f"Failed: {len(errors)} VM(s): {'; '.join(errors[:3])}")
         if not updated and not errors:
             messages.info(request, "No VMs needed syncing")
+        cluster_resolver.report(request)
 
         return redirect(f"/plugins/vcenter/compare/?server={server}")

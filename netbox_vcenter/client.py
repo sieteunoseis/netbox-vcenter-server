@@ -198,7 +198,7 @@ class VCenterClient:
         when done thousands of times.
 
         Returns:
-            Dict mapping host moref key -> {"cluster": name, "datacenter": name}
+            Dict mapping host moref key -> {"cluster": name, "host": name, "datacenter": name}
         """
         cache = {}
 
@@ -248,13 +248,16 @@ class VCenterClient:
                 for host_obj in host_objects:
                     host_key = str(host_obj.obj)
                     host_parent = None
+                    host_name = None
 
                     for prop in host_obj.propSet or []:
                         if prop.name == "parent":
                             host_parent = prop.val
+                        elif prop.name == "name":
+                            host_name = prop.val
 
                     if host_parent:
-                        info = {"cluster": None, "datacenter": None}
+                        info = {"cluster": None, "host": host_name, "datacenter": None}
 
                         # Check if parent is a cluster
                         if isinstance(host_parent, vim.ClusterComputeResource):
@@ -297,6 +300,7 @@ class VCenterClient:
             "disk_mb": None,
             "disks": [],
             "cluster": None,
+            "host": None,
             "datacenter": None,
             "guest_os": None,
             "uuid": None,
@@ -386,6 +390,7 @@ class VCenterClient:
             host_key = str(host)
             host_info = host_info_cache.get(host_key, {})
             vm_data["cluster"] = host_info.get("cluster")
+            vm_data["host"] = host_info.get("host")
             vm_data["datacenter"] = host_info.get("datacenter")
 
         return vm_data

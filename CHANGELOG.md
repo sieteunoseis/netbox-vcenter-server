@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-11-20
+
+### Added
+- **Cluster sync** - New `sync_cluster` setting (default `False`) moves existing VMs to the cluster vCenter reports on "update existing" import and "Sync All Differences", and places newly imported VMs in it. The cluster name is taken as-is from vCenter: the VM's vSphere cluster, or its ESXi host's name when the host is standalone. The compare page flags cluster differences.
+- **Auto-create clusters** - With `auto_create_clusters` (default `False`) and `auto_create_cluster_type` (an existing cluster type slug), a missing cluster is created, scoped to the NetBox site whose name or slug matches the vCenter datacenter.
+- The ESXi host of each VM is now fetched and shown in the Cluster column for VMs on standalone hosts.
+
 ## [0.8.1] - 2026-11-20
 
 ### Fixed

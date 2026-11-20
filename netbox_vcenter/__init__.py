@@ -7,7 +7,7 @@ Supports multiple vCenter servers with per-server caching and VM import to NetBo
 
 from netbox.plugins import PluginConfig
 
-__version__ = "0.8.1"
+__version__ = "0.9.0"
 
 
 class VcenterConfig(PluginConfig):
@@ -91,6 +91,19 @@ class VcenterConfig(PluginConfig):
         # The custom field must already exist in NetBox (type Text, object type
         # Virtual Machine). Leave empty to disable.
         "guest_os_custom_field": "",
+        # Sync each VM's cluster from vCenter on "update existing" import and "Sync All
+        # Differences", and place newly imported VMs in it. The NetBox cluster name is
+        # taken as-is from vCenter: the VM's vSphere cluster, or its ESXi host's name
+        # when the host is standalone (not in a cluster). VMs whose vCenter cluster/host
+        # has no NetBox cluster of the same name are left where they are, unless
+        # auto_create_clusters is enabled.
+        "sync_cluster": False,
+        # Create a missing NetBox cluster (named as above) when sync_cluster needs one.
+        # Requires auto_create_cluster_type. The new cluster is scoped to the NetBox site
+        # whose name or slug matches the VM's vCenter datacenter, or left unscoped if none.
+        "auto_create_clusters": False,
+        # Slug of an existing NetBox cluster type to give auto-created clusters.
+        "auto_create_cluster_type": "",
     }
 
 

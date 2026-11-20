@@ -101,7 +101,7 @@
                                 <td>{{ vm.vcpus|default:'-' }}</td>
                                 <td>{{ vm.memory_mb|default:'-' }}</td>
                                 <td>{{ vm.disk_mb|default:'-' }}</td>
-                                <td>{{ vm.cluster|default:'-' }}</td>
+                                <td>{{ vm.cluster|default:vm.host|default:'-' }}</td>
                             </tr>
                             {% endfor %}
                         </tbody>
@@ -168,6 +168,14 @@
                                 <td>Primary IP</td>
                                 <td>{{ vm.vcenter.primary_ip|default:'-' }}</td>
                                 <td>{{ vm.netbox.primary_ip|default:'-' }}</td>
+                            </tr>
+                            {% endif %}
+                            {% if vm.diffs.cluster %}
+                            <tr>
+                                <td><strong>{{ vm.name }}</strong></td>
+                                <td>Cluster</td>
+                                <td>{{ vm.vcenter_cluster|default:'-' }}</td>
+                                <td>{{ vm.netbox.cluster|default:'-' }}</td>
                             </tr>
                             {% endif %}
                             {% if vm.diffs.notes %}

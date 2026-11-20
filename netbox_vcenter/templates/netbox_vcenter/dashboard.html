@@ -244,7 +244,7 @@
                 <tbody>
                     {% for vm in vms %}
                     <tr class="vm-row"
-                        data-search="{{ vm.name|lower }} {{ vm.cluster|default:''|lower }} {{ vm.primary_ip|default:''|lower }} {{ vm.datacenter|default:''|lower }}">
+                        data-search="{{ vm.name|lower }} {{ vm.cluster|default:''|lower }} {{ vm.host|default:''|lower }} {{ vm.primary_ip|default:''|lower }} {{ vm.datacenter|default:''|lower }}">
                         <td>
                             <input type="checkbox" class="form-check-input vm-checkbox"
                                    value="{{ vm.name }}" data-vm-name="{{ vm.name }}" data-server="{{ vm.source_server }}">
@@ -287,7 +287,7 @@
                             -
                             {% endif %}
                         </td>
-                        <td>{{ vm.cluster|default:'-' }}</td>
+                        <td>{{ vm.cluster|default:vm.host|default:'-' }}</td>
                         <td>{{ vm.datacenter|default:'-' }}</td>
                         <td>
                             {% if vm.exists_in_netbox %}
