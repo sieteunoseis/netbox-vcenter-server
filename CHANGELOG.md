@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.2] - 2026-11-20
+
+### Fixed
+- **Cluster sync failed with "not assigned to this site"** - Auto-created clusters were scoped to the site matching the vCenter datacenter, which conflicted with VMs whose NetBox site differs. Auto-created clusters now have no site scope.
+- **Cluster sync failed with "device is not assigned to this cluster"** - When a VM moves cluster, its host device is now set to the NetBox device named after its vCenter ESXi host if that device is in the new cluster, and cleared otherwise.
+
 ## [0.9.1] - 2026-11-20
 
 ### Fixed

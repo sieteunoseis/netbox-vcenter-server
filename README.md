@@ -147,9 +147,10 @@ fallback). The cluster name is taken as-is from vCenter: the VM's vSphere
 cluster, or its ESXi host's name when the host isn't in a cluster. If no NetBox
 cluster has that exact name, the VM is left where it is, unless
 `auto_create_clusters` is enabled; the cluster is then created with the
-cluster type whose slug is `auto_create_cluster_type`, scoped to the NetBox
-site whose name or slug matches the vCenter datacenter (left unscoped if none
-matches). Re-sync from vCenter after upgrading so cached data includes each
+cluster type whose slug is `auto_create_cluster_type` and no site scope.
+When a VM changes cluster, its host device is set to the NetBox device named
+after its vCenter ESXi host if that device is in the new cluster, and cleared
+otherwise (NetBox requires a VM's device to belong to its cluster). Re-sync from vCenter after upgrading so cached data includes each
 VM's host.
 
 Each of a VM's hard disks is also synced as a NetBox `VirtualDisk` (name and

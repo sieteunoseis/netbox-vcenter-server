@@ -4,11 +4,12 @@ import json
 import logging
 import re
 
-from dcim.models import MACAddress, Platform, Site
+from dcim.models import Device, MACAddress, Platform
 from django.conf import settings
 from django.contrib import messages
 from django.contrib.contenttypes.models import ContentType
 from django.core.cache import cache
+from django.db import models
 from django.shortcuts import redirect, render
 from django.utils import timezone
 from django.views.generic import View
@@ -195,9 +196,8 @@ class ClusterResolver:
     Look up the NetBox cluster named by vCenter for a VM (see vcenter_cluster_name),
     creating it when auto_create_clusters is enabled. Results are cached per batch.
 
-    A created cluster gets the ClusterType whose slug is auto_create_cluster_type,
-    and is scoped to the NetBox site whose name or slug matches the VM's vCenter
-    datacenter (case-insensitive); with no matching site it is left unscoped.
+    A created cluster gets the ClusterType whose slug is auto_create_cluster_type
+    and no scope, so it never conflicts with the sites already set on its VMs.
     """
 
     def __init__(self, import_config: dict):
@@ -220,14 +220,6 @@ class ClusterResolver:
                     logger.warning(f"Cluster type '{self.cluster_type_slug}' not found in NetBox")
         return self._cluster_type
 
-    @staticmethod
-    def _site_for_datacenter(datacenter: str | None):
-        if not datacenter:
-            return None
-        return (
-            Site.objects.filter(name__iexact=datacenter).first() or Site.objects.filter(slug__iexact=datacenter).first()
-        )
-
     def resolve(self, vc_vm: dict) -> Cluster | None:
         name = vcenter_cluster_name(vc_vm)
         if not name:
@@ -240,9 +232,6 @@ class ClusterResolver:
             cluster_type = self._get_cluster_type()
             if cluster_type is not None:
                 cluster = Cluster(name=name, type=cluster_type)
-                site = self._site_for_datacenter(vc_vm.get("datacenter"))
-                if site is not None:
-                    cluster.scope = site
                 cluster.full_clean()
                 cluster.save()
                 self.created.append(name)
@@ -252,6 +241,27 @@ class ClusterResolver:
 
         self._cache[name] = cluster
         return cluster
+
+    def move_vm(self, vm: VirtualMachine, vc_vm: dict, cluster: Cluster) -> None:
+        """
+        Put vm in cluster. NetBox requires a VM's host device to belong to its
+        cluster, so the device is set to the NetBox device named after the VM's
+        vCenter host when that device is in the cluster, and cleared otherwise
+        (the old device no longer reflects where vCenter runs the VM).
+        """
+        vm.cluster = cluster
+        if vm.device_id and vm.device.cluster_id != cluster.pk:
+            vm.device = self._host_device(vc_vm.get("host"), cluster)
+
+    def _host_device(self, host: str | None, cluster: Cluster):
+        if not host:
+            return None
+        short = host.split(".")[0]
+        return (
+            Device.objects.filter(cluster=cluster)
+            .filter(models.Q(name__iexact=host) | models.Q(name__iexact=short))
+            .first()
+        )
 
     def report(self, request) -> None:
         """Add messages for clusters created and vCenter clusters with no NetBox match."""
@@ -777,7 +787,7 @@ class VMImportView(View):
                         if sync_cluster:
                             target_cluster = cluster_resolver.resolve(vm_data)
                             if target_cluster and existing_vm.cluster_id != target_cluster.pk:
-                                existing_vm.cluster = target_cluster
+                                cluster_resolver.move_vm(existing_vm, vm_data, target_cluster)
 
                         # Update role and platform if configured and not already set
                         if default_role and not existing_vm.role:
@@ -1200,7 +1210,7 @@ class SyncDifferencesView(View):
                 if diffs["cluster"]:
                     target_cluster = cluster_resolver.resolve(vc_vm)
                     if target_cluster:
-                        nb_vm.cluster = target_cluster
+                        cluster_resolver.move_vm(nb_vm, vc_vm, target_cluster)
 
                 # Sync disks before setting the aggregate disk size: NetBox
                 # validates VirtualMachine.disk against the sum of its
