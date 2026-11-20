@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-11-20
+
+### Fixed
+- **Update existing VMs failed with `'str' object has no attribute 'version'`** - When "update existing" import created a new IP and set it as the VM's primary IP, the IP's address was still a plain string, so the VM's validation crashed. New IPs are now built with a proper network address.
+
+### Changed
+- `min_version` raised to NetBox 4.7.5 (the version this release was tested on).
+
 ## [0.8.0] - 2026-11-17
 
 ### Added

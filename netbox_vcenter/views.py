@@ -14,6 +14,7 @@ from django.utils import timezone
 from django.views.generic import View
 from extras.models import CustomField, Tag
 from ipam.models import VRF, IPAddress, Prefix
+from netaddr import IPNetwork
 from tenancy.models import Tenant
 from virtualization.models import Cluster, VirtualDisk, VirtualMachine, VMInterface
 
@@ -805,8 +806,10 @@ class VMImportView(View):
             containing_prefix = max(prefix_qs, key=lambda p: p.prefix.prefixlen, default=None)
             mask_length = containing_prefix.prefix.prefixlen if containing_prefix else (128 if is_ipv6 else 32)
 
+            # Pass an IPNetwork, not a str: the in-memory object is later used as
+            # the VM's primary IP, and VirtualMachine.clean() reads address.version.
             ip_obj = IPAddress(
-                address=f"{host}/{mask_length}",
+                address=IPNetwork(f"{host}/{mask_length}"),
                 assigned_object=interface,
                 vrf=vrf,
                 tenant=tenant,
