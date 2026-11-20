@@ -287,7 +287,7 @@
                             -
                             {% endif %}
                         </td>
-                        <td>{{ vm.cluster|default:vm.host|default:'-' }}</td>
+                        <td>{% firstof vm.cluster vm.host '-' %}</td>
                         <td>{{ vm.datacenter|default:'-' }}</td>
                         <td>
                             {% if vm.exists_in_netbox %}

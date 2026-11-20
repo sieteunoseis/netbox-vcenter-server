@@ -101,7 +101,7 @@
                                 <td>{{ vm.vcpus|default:'-' }}</td>
                                 <td>{{ vm.memory_mb|default:'-' }}</td>
                                 <td>{{ vm.disk_mb|default:'-' }}</td>
-                                <td>{{ vm.cluster|default:vm.host|default:'-' }}</td>
+                                <td>{% firstof vm.cluster vm.host '-' %}</td>
                             </tr>
                             {% endfor %}
                         </tbody>

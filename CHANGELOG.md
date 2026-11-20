@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-11-20
+
+### Fixed
+- Dashboard and compare pages crashed with `VariableDoesNotExist: Failed lookup for key [host]` when the cached vCenter data predated 0.9.0 (no `host` key). The Cluster column now uses `{% firstof %}`, which tolerates the missing key.
+
 ## [0.9.0] - 2026-11-20
 
 ### Added
